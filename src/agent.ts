@@ -1,20 +1,23 @@
 import { config } from "./config.js";
 import { analyseCall, streamAgentReply } from "./runware.js";
 import { classifyConsent, detectUrgentSafetyFlag } from "./safety.js";
-import { addSafetyFlag, addTurn, getCall, setSummary, updateCall, updateStatus } from "./store.js";
-import type { CallSession } from "./types.js";
+import {
+  addSafetyFlag,
+  addTurn,
+  createCheckInPlan,
+  getCall,
+  markQuestionAsked,
+  recordActiveQuestionResponse,
+  setSummary,
+  updateCall,
+  updateStatus
+} from "./store.js";
 
 type RelaySocket = { send: (data: string) => void; readyState: number };
 const openSockets = new Map<string, RelaySocket>();
 const activeResponses = new Map<string, AbortController>();
 
-const fallbackQuestions = [
-  "Has your energy or ability to do usual activities changed from your normal over the last few days?",
-  "Have you had fever, a recent infection, or persistent sinus or nasal symptoms?",
-  "Have you noticed any joint or muscle aches, rash, numbness, or unusual weakness?",
-  "Have you noticed breathing or chest changes, or any change in your urine?",
-  "Have you taken your medication as prescribed, without making any changes yourself?"
-];
+const fallbackQuestionIds = ["general_change", "infection_context", "neurology_change", "respiratory_change", "renal_change", "medication_context"];
 
 function send(socket: RelaySocket, message: unknown) {
   if (socket.readyState === 1) socket.send(JSON.stringify(message));
@@ -28,13 +31,26 @@ function end(socket: RelaySocket, reasonCode: string) {
   send(socket, { type: "end", handoffData: JSON.stringify({ reasonCode }) });
 }
 
-function chooseFallbackQuestion(session: CallSession) {
-  const asked = session.turns.filter((turn) => turn.role === "assistant").length;
-  return fallbackQuestions[Math.min(asked, fallbackQuestions.length - 1)]!;
+function chooseFallbackQuestion(callId: string) {
+  const session = getCall(callId);
+  if (!session) return "How have you felt compared with your usual self?";
+  const asked = session.questionResponses.length;
+  const questionId = fallbackQuestionIds[Math.min(asked, fallbackQuestionIds.length - 1)]!;
+  return askCatalogueQuestion(callId, questionId);
+}
+
+function askCatalogueQuestion(callId: string, questionId: string) {
+  const question = markQuestionAsked(callId, questionId);
+  return question?.prompt ?? "How have you felt compared with your usual self?";
 }
 
 function urgentMessage() {
   return `This could need urgent medical attention. Please call ${config.EMERGENCY_NUMBER} now, or go to the nearest emergency department. Do not wait for this app or change your medication unless a clinician tells you to.`;
+}
+
+function recordReply(callId: string, response: string) {
+  addTurn(callId, "assistant", response);
+  return response;
 }
 
 export function attachSocket(callId: string, socket: RelaySocket) {
@@ -55,6 +71,7 @@ export async function handlePatientPrompt(callId: string, text: string) {
   interruptReply(callId);
   const patientTurn = addTurn(callId, "patient", text);
   if (!patientTurn) return;
+  if (session.consent) recordActiveQuestionResponse(callId, patientTurn);
 
   const urgent = detectUrgentSafetyFlag(text);
   if (urgent) {
@@ -84,7 +101,8 @@ export async function handlePatientPrompt(callId: string, text: string) {
       setTimeout(() => end(socket, "consent-declined"), 3_000);
       return;
     }
-    const response = "Thank you. I will ask a few short questions. This does not diagnose a flare or replace your care team. How have you felt compared with your usual self?";
+    createCheckInPlan(callId);
+    const response = `Thank you. I will ask a few short questions. This does not diagnose a flare or replace your care team. ${askCatalogueQuestion(callId, "general_change")}`;
     addTurn(callId, "assistant", response);
     speak(socket, response);
     return;
@@ -112,7 +130,7 @@ export async function handlePatientPrompt(callId: string, text: string) {
       controller.signal
     );
     if (!streamed) {
-      reply = chooseFallbackQuestion(getCall(callId)!);
+      reply = chooseFallbackQuestion(callId);
       speak(socket, reply, false);
     }
     if (!controller.signal.aborted) {
@@ -121,7 +139,7 @@ export async function handlePatientPrompt(callId: string, text: string) {
     }
   } catch (error) {
     if (!controller.signal.aborted) {
-      reply = chooseFallbackQuestion(getCall(callId)!);
+      reply = chooseFallbackQuestion(callId);
       speak(socket, reply);
       addTurn(callId, "assistant", reply);
       console.error("Runware live response failed", error);
@@ -129,6 +147,69 @@ export async function handlePatientPrompt(callId: string, text: string) {
   } finally {
     activeResponses.delete(callId);
   }
+}
+
+export async function handleWhatsAppPrompt(callId: string, text: string) {
+  const session = getCall(callId);
+  if (!session) return "I could not start this check-in. Please try again.";
+
+  const patientTurn = addTurn(callId, "patient", text.trim());
+  if (!patientTurn) return "I could not save that message. Please try again.";
+  if (session.consent) recordActiveQuestionResponse(callId, patientTurn);
+
+  const urgent = detectUrgentSafetyFlag(text);
+  if (urgent) {
+    addSafetyFlag(callId, urgent);
+    updateStatus(callId, "urgent");
+    return recordReply(callId, urgentMessage());
+  }
+
+  if (session.consent === undefined) {
+    const consent = classifyConsent(text);
+    if (consent === undefined) {
+      return recordReply(
+        callId,
+        "Before we continue, do you agree to a short AI-supported health check-in on WhatsApp? It is not emergency care or a diagnosis. Reply YES or NO."
+      );
+    }
+    updateCall(callId, { consent });
+    if (!consent) {
+      updateStatus(callId, "declined");
+      return recordReply(
+        callId,
+        "No problem. I will not continue this check-in. If you need help, contact your usual care team."
+      );
+    }
+    createCheckInPlan(callId);
+    return recordReply(callId, `Thank you. ${askCatalogueQuestion(callId, "general_change")} I will ask one question at a time. Reply DONE when you have finished.`);
+  }
+
+  if (/\b(done|finish(?:ed)?|goodbye|bye|that's all|that is all|end (?:the )?(?:chat|check-in)|stop)\b/i.test(text)) {
+    const response = recordReply(
+      callId,
+      "Thank you. I have added this conversation to your check-in record. This does not diagnose a flare; contact your care team if you are concerned."
+    );
+    void finaliseCall(callId);
+    return response;
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  let reply = "";
+  try {
+    const streamed = await streamAgentReply(
+      getCall(callId)!,
+      (token) => { reply += token; },
+      controller.signal
+    );
+    if (!streamed || !reply.trim()) reply = chooseFallbackQuestion(callId);
+  } catch (error) {
+    reply = chooseFallbackQuestion(callId);
+    if (!controller.signal.aborted) console.error("Runware WhatsApp response failed", error);
+  } finally {
+    clearTimeout(timeout);
+  }
+  return recordReply(callId, `${reply.trim()} Reply DONE when you have finished.`);
 }
 
 export async function finaliseCall(callId: string) {

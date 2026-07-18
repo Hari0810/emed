@@ -7,6 +7,66 @@ export type CallStatus =
   | "urgent"
   | "failed";
 
+export type CheckInChannel = "phone" | "whatsapp" | "app";
+
+export type QuestionDomain =
+  | "general"
+  | "infection"
+  | "renal"
+  | "respiratory"
+  | "ent"
+  | "neurology"
+  | "medication"
+  | "urgent";
+
+export type QuestionAnswerType = "change" | "yes-no" | "free-text";
+
+/**
+ * A clinically reviewed prompt. Definitions are versioned so historical answers
+ * retain the wording and meaning that applied when they were collected.
+ */
+export interface QuestionDefinition {
+  id: string;
+  version: number;
+  domain: QuestionDomain;
+  purpose: string;
+  prompt: string;
+  answerType: QuestionAnswerType;
+  options?: readonly string[];
+  appliesTo?: {
+    subtypes?: readonly ("GPA" | "MPA" | "EGPA")[];
+    priorOrganInvolvement?: readonly string[];
+  };
+  followUpQuestionIds?: readonly string[];
+  active: boolean;
+}
+
+export interface PlannedQuestion {
+  questionId: string;
+  questionVersion: number;
+  reason: string;
+  askedAt?: string;
+}
+
+export interface CheckInPlan {
+  createdAt: string;
+  questionIds: string[];
+  plannedQuestions: PlannedQuestion[];
+}
+
+/** Raw wording is preserved; value is only populated after validated extraction. */
+export interface QuestionResponse {
+  id: string;
+  questionId: string;
+  questionVersion: number;
+  askedAt: string;
+  answeredAt: string;
+  rawAnswer: string;
+  value: string | null;
+  source: CheckInChannel;
+  evidenceTurnId: string;
+}
+
 export interface ConversationTurn {
   id: string;
   role: "patient" | "assistant";
@@ -36,6 +96,7 @@ export interface CallSummary {
 
 export interface CallSession {
   id: string;
+  channel: CheckInChannel;
   phoneNumber: string;
   twilioCallSid?: string;
   status: CallStatus;
@@ -44,6 +105,9 @@ export interface CallSession {
   startedAt?: string;
   endedAt?: string;
   turns: ConversationTurn[];
+  checkInPlan?: CheckInPlan;
+  activeQuestionId?: string;
+  questionResponses: QuestionResponse[];
   safetyFlags: SafetyFlag[];
   summary?: CallSummary;
   error?: string;

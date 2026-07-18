@@ -1,27 +1,30 @@
-import { fileURLToPath } from "node:url";
 import formbody from "@fastify/formbody";
-import fastifyStatic from "@fastify/static";
 import websocket from "@fastify/websocket";
 import Fastify from "fastify";
 import twilio from "twilio";
 import { z } from "zod";
-import { attachSocket, finaliseCall, handlePatientPrompt, interruptReply } from "./agent.js";
-import { config, hasTwilioCredentials } from "./config.js";
-import { createCall, getCall, toPublicCall, updateCall, updateStatus } from "./store.js";
+import { attachSocket, finaliseCall, handlePatientPrompt, handleWhatsAppPrompt, interruptReply } from "./agent.js";
+import { config, hasTwilioCredentials, hasWhatsAppCredentials } from "./config.js";
+import { createAppCheckIn, createCall, getCall, getOrCreateWhatsAppSession, listCalls, toPublicCall, updateCall, updateStatus } from "./store.js";
 import type { ConversationRelayMessage } from "./types.js";
 
 const app = Fastify({ logger: true });
-const projectRoot = fileURLToPath(new URL("../", import.meta.url));
 const twilioClient = hasTwilioCredentials()
   ? twilio(config.TWILIO_ACCOUNT_SID!, config.TWILIO_AUTH_TOKEN!)
   : undefined;
 
 await app.register(formbody);
 await app.register(websocket);
-await app.register(fastifyStatic, { root: projectRoot, serve: false });
 
 const callRequestSchema = z.object({
-  phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Use an E.164 number, e.g. +447700900123")
+  phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Use an E.164 number, e.g. +447700900123").optional()
+});
+const appCheckInSchema = z.object({
+  symptoms: z.array(z.string().trim().min(1).max(100)).min(1).max(9)
+});
+const whatsappTestSchema = z.object({
+  phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Use an E.164 number, e.g. +447700900123"),
+  message: z.string().trim().min(1).max(2_000)
 });
 
 function xmlEscape(value: string) {
@@ -60,17 +63,64 @@ app.get("/health", async () => ({
   ok: true,
   services: {
     twilio: hasTwilioCredentials(),
+    whatsapp: hasWhatsAppCredentials(),
     runware: Boolean(config.RUNWARE_API_KEY)
   }
 }));
 
-app.get("/", (_, reply) => reply.sendFile("index.html"));
-app.get("/styles.css", (_, reply) => reply.sendFile("styles.css"));
-app.get("/script.js", (_, reply) => reply.sendFile("script.js"));
+app.get("/api/whatsapp", async () => {
+  const sender = config.TWILIO_WHATSAPP_FROM?.replace(/^whatsapp:/, "");
+  return {
+    enabled: hasWhatsAppCredentials(),
+    launchUrl: sender ? `https://wa.me/${sender.replace(/^\+/, "")}?text=START` : null,
+    sandbox: sender === "+14155238886"
+  };
+});
+
+/**
+ * Local-only WhatsApp conversation simulator. It deliberately uses the same
+ * handler as the Twilio webhook but never calls Twilio or sends a real message.
+ */
+app.post("/api/test/whatsapp", async (request, reply) => {
+  if (config.NODE_ENV === "production") {
+    return reply.code(404).send({ error: "WhatsApp testing is only available outside production." });
+  }
+
+  const parsed = whatsappTestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid WhatsApp test message" });
+  }
+
+  const session = getOrCreateWhatsAppSession(`whatsapp:${parsed.data.phoneNumber}`);
+  const response = await handleWhatsAppPrompt(session.id, parsed.data.message);
+  return {
+    response,
+    session: {
+      id: session.id,
+      status: getCall(session.id)?.status,
+      consent: getCall(session.id)?.consent
+    }
+  };
+});
+
+app.get("/api/check-ins", async () => ({
+  checkIns: listCalls().map(toPublicCall)
+}));
+
+app.post("/api/check-ins", async (request, reply) => {
+  const parsed = appCheckInSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: "Select at least one symptom." });
+  const checkIn = createAppCheckIn(parsed.data.symptoms);
+  return reply.code(201).send({ checkIn: toPublicCall(checkIn) });
+});
 
 app.post("/api/calls", async (request, reply) => {
   const parsed = callRequestSchema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid phone number" });
+  const phoneNumber = parsed.data.phoneNumber ?? config.DEMO_PHONE_NUMBER;
+  if (!phoneNumber) {
+    return reply.code(503).send({ error: "No demo phone number is configured. Add DEMO_PHONE_NUMBER to .env." });
+  }
   if (!twilioClient) {
     return reply.code(503).send({
       error: "Phone calling is not configured. Add Twilio credentials to .env before starting a call."
@@ -80,7 +130,7 @@ app.post("/api/calls", async (request, reply) => {
     return reply.code(503).send({ error: "PUBLIC_BASE_URL must be a public HTTPS URL for Twilio callbacks." });
   }
 
-  const session = createCall(parsed.data.phoneNumber);
+  const session = createCall(phoneNumber);
   try {
     const call = await twilioClient.calls.create({
       to: session.phoneNumber,
@@ -105,6 +155,28 @@ app.get("/api/calls/:callId", async (request, reply) => {
   const session = getCall(params.callId);
   if (!session) return reply.code(404).send({ error: "Call not found" });
   return { call: toPublicCall(session) };
+});
+
+app.post("/twilio/whatsapp", async (request, reply) => {
+  const body = (request.body as Record<string, unknown>) ?? {};
+  const valid = isValidTwilioRequest(
+    request.headers["x-twilio-signature"],
+    requestUrl(request.raw.url ?? "/twilio/whatsapp"),
+    body
+  );
+  if (!valid) return reply.code(403).send("Invalid Twilio signature");
+
+  const from = typeof body.From === "string" ? body.From : "";
+  const message = typeof body.Body === "string" ? body.Body.trim() : "";
+  if (!/^whatsapp:\+[1-9]\d{7,14}$/.test(from) || !message) {
+    return reply.code(400).send("A WhatsApp sender and text body are required");
+  }
+
+  const session = getOrCreateWhatsAppSession(from);
+  const responseText = await handleWhatsAppPrompt(session.id, message);
+  const response = new twilio.twiml.MessagingResponse();
+  response.message(responseText);
+  return reply.type("text/xml").send(response.toString());
 });
 
 app.post("/twilio/voice", async (request, reply) => {
