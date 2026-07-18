@@ -22,8 +22,8 @@ set. This is intentional: the browser never receives provider keys.
 
 ## WhatsApp check-in scaffold
 
-The dashboard also includes **Start in WhatsApp**. It opens the configured
-WhatsApp sender and starts a text-based, AI-supported check-in. WhatsApp messages
+The dashboard's **Begin WhatsApp demo** button sends a real consent message to the
+fixed demo recipient and starts a text-based, AI-supported check-in. WhatsApp messages
 use the same consent prompt, urgent-symptom checks, transcript store, and summary
 pipeline as telephone calls.
 
@@ -49,8 +49,8 @@ pipeline as telephone calls.
    ```
 
 5. Start the app with `npm run dev`, open `http://localhost:3000`, choose
-   **Start in WhatsApp**, then send `START`. Reply `YES` to consent, then `DONE`
-   when the check-in is complete.
+   **Begin WhatsApp demo**, then reply `YES` to consent and `DONE` when the
+   check-in is complete.
 
 For real deployment, register a WhatsApp sender and obtain patient opt-in. A
 free-form reply is allowed for 24 hours after the patient's last message; outside
@@ -80,6 +80,10 @@ call.
 - `GET /api/calls/:callId` returns a masked-number status for the UI.
 - `POST /twilio/whatsapp` accepts inbound WhatsApp messages and returns the next
   safe check-in response as TwiML.
+- `POST /api/whatsapp/demo` sends the opening WhatsApp message to the fixed demo
+  recipient; it is rate-limited to one start per minute.
+- `POST /api/check-ins/voice` stores the browser voice transcript and, when
+  `RUNWARE_API_KEY` is configured, saves a schema-validated AI summary with it.
 - `GET /api/whatsapp` supplies the dashboard's WhatsApp launch link without
   exposing any provider credentials.
 - `/twilio/voice`, `/twilio/relay`, and related callbacks implement the Twilio
@@ -90,7 +94,7 @@ call.
 - `src/runware.ts` streams a short Runware reply during the call and produces a
   schema-validated post-call summary.
 
-Call sessions are in memory so this remains a hackathon scaffold. Before a real
+Check-ins are persisted in a local SQLite file for this hackathon scaffold. Before a real
 deployment, add authenticated user/patient access, encrypted persistent storage,
 auditing, retention controls, a clinically approved escalation policy, and clinical
 evaluation of the rule and prompt set.

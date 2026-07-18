@@ -7,51 +7,43 @@ import type { QuestionDefinition } from "./types.js";
 export const questionCatalogue: readonly QuestionDefinition[] = [
   {
     id: "general_change",
-    version: 1,
+    version: 2,
     domain: "general",
     purpose: "detect change from the person's usual health and function",
-    prompt: "Compared with your usual, has your energy or ability to do usual activities changed over the last few days?",
+    prompt: "How have you felt compared with your usual self?",
     answerType: "change",
     options: ["new", "worse", "same", "better", "unsure"],
-    followUpQuestionIds: ["infection_context", "neurology_change"],
+    followUpQuestionIds: ["infection_context", "symptom_cluster_change"],
     active: true
   },
   {
     id: "infection_context",
-    version: 1,
+    version: 2,
     domain: "infection",
     purpose: "capture possible infection context without assigning a cause",
-    prompt: "Have you had a fever, recent infection, or new persistent sinus or nasal symptoms?",
+    prompt: "Have you had a fever, recent infection, or persistent sinus or nasal symptoms?",
     answerType: "free-text",
-    followUpQuestionIds: ["respiratory_change"],
+    followUpQuestionIds: ["symptom_cluster_change"],
     active: true
   },
   {
-    id: "respiratory_change",
+    id: "symptom_cluster_change",
+    version: 1,
+    domain: "general",
+    purpose: "identify new musculoskeletal, skin, or neurological symptoms",
+    prompt: "Have you noticed new joint or muscle aches, a rash, numbness, or unusual weakness?",
+    answerType: "free-text",
+    followUpQuestionIds: ["respiratory_renal_change"],
+    active: true
+  },
+  {
+    id: "respiratory_renal_change",
     version: 1,
     domain: "respiratory",
-    purpose: "identify a change in respiratory symptoms",
-    prompt: "Have you noticed any new or worsening cough, breathlessness, or chest symptoms?",
+    purpose: "identify a respiratory, chest, or urinary change",
+    prompt: "Have you noticed any breathing, chest, or urine changes?",
     answerType: "free-text",
-    active: true
-  },
-  {
-    id: "renal_change",
-    version: 1,
-    domain: "renal",
-    purpose: "capture patient-reported renal warning signs; this does not rule out silent kidney involvement",
-    prompt: "Have you noticed visible blood in your urine, new swelling, or a clear change in your urine?",
-    answerType: "free-text",
-    appliesTo: { priorOrganInvolvement: ["kidney"] },
-    active: true
-  },
-  {
-    id: "neurology_change",
-    version: 1,
-    domain: "neurology",
-    purpose: "identify new neurological symptoms or loss of function",
-    prompt: "Have you noticed new numbness, tingling, unusual weakness, falls, or difficulty with usual movements?",
-    answerType: "free-text",
+    followUpQuestionIds: ["medication_context"],
     active: true
   },
   {
@@ -64,6 +56,15 @@ export const questionCatalogue: readonly QuestionDefinition[] = [
     active: true
   }
 ];
+
+/** The clinically reviewed standard sequence, shared with the voice check-in wording. */
+export const standardQuestionIds = [
+  "general_change",
+  "infection_context",
+  "symptom_cluster_change",
+  "respiratory_renal_change",
+  "medication_context"
+] as const;
 
 export function getQuestionDefinition(questionId: string) {
   return questionCatalogue.find((question) => question.id === questionId && question.active);

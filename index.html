@@ -24,23 +24,33 @@
       </div>
     </aside>
 
-    <main>
+    <main class="dashboard-main">
       <div id="dashboard" class="tab-panel active">
-      <header>
+      <header class="dashboard-header">
         <div><p class="eyebrow">SATURDAY, 18 JULY · GPA MONITORING</p><h1>Good morning, Alex.</h1><p>Your monitoring update for today.</p></div>
         <span class="demo-pill">SIMULATED DATA</span>
       </header>
 
+      <div class="dashboard-grid">
       <section id="overview" class="attention-panel" aria-labelledby="attention-title">
         <div class="attention-panel-heading"><div><p class="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">Care-team review recommended.</h2></div><span class="status-pill attention">● Needs attention</span></div>
         <p class="attention-lead">Small changes have continued for 10 days after your prescribed prednisone reduction. This deserves review, but does not confirm a flare.</p>
+        <section class="why-attention" aria-labelledby="why-attention-title">
+          <div class="why-attention-heading"><div><p class="eyebrow">WHY THIS NEEDS ATTENTION</p><h3 id="why-attention-title">Several changes are moving together.</h3></div><span>10-day pattern</span></div>
+          <div class="why-reasons" aria-label="Reasons for care-team review">
+            <article><span class="reason-icon">Rx</span><div><b>Medication context</b><p>Prednisone was reduced from 10 mg to 7.5 mg on 9 July.</p></div></article>
+            <article><span class="reason-icon">3</span><div><b>Symptoms changed</b><p>Fatigue, joint aches, and sinus pressure have increased.</p></div></article>
+            <article><span class="reason-icon">↓</span><div><b>Function shifted</b><p>Daily activity is 32% below your usual level.</p></div></article>
+            <article><span class="reason-icon">↑</span><div><b>Body signal changed</b><p>Resting heart rate is 14% above your baseline.</p></div></article>
+          </div>
+          <p class="why-context">A recent respiratory infection is relevant context. These signals need clinical interpretation; they do not diagnose a flare.</p>
+        </section>
         <div class="dashboard-actions"><button id="planButton" class="primary-button">Prepare care-team summary</button><button id="answerButton" class="secondary-button">Complete targeted check-in</button></div>
-        <div class="evidence-summary" aria-label="Key evidence"><span><b>10 days</b> sustained change</span><span><b>3</b> symptom changes</span><span><b>+14%</b> resting heart rate</span></div>
         <p class="attention-guidance">Keep taking medication as prescribed unless your care team advises otherwise.</p>
       </section>
 
-      <details id="supportingEvidence" class="supporting-details">
-        <summary><span>Why this needs attention</span><small>Medication, symptoms, trends, and recent results</small></summary>
+      <section id="supportingEvidence" class="supporting-details" aria-labelledby="monitoring-details-title">
+        <div class="monitoring-details-heading"><div><p class="eyebrow">MONITORING DETAILS</p><h2 id="monitoring-details-title">The supporting record</h2></div><p>Medication, symptoms, trends, and recent results</p></div>
         <div class="supporting-content">
           <section class="medication-context" aria-label="Medication context"><div><p class="eyebrow">MEDICATION CONTEXT</p><h2>Prednisone was reduced from 10 mg to 7.5 mg on 9 July.</h2><p>Fatigue, joint aches, and sinus pressure have increased since. A recent respiratory infection is also relevant context.</p></div><div class="context-stats"><span>Current dose <b>7.5 mg</b></span><span>Adherence <b>96%</b></span></div></section>
 
@@ -55,7 +65,8 @@
 
           <section class="clinical-strip" aria-label="Latest clinical data"><div><p class="eyebrow">SIMULATED CLINICAL DATA · 16 JULY</p><h2>Recent results are available to your care team.</h2><p>Wearable data cannot confirm or rule out active vasculitis. Clinical review and clinician-ordered tests remain essential.</p></div><div class="clinical-values"><span>Creatinine <b>89 µmol/L</b><small>Stable</small></span><span>Urine blood <b>Negative</b><small>Dip test</small></span><span>CRP <b>8 mg/L</b><small>From 3 mg/L</small></span></div></section>
         </div>
-      </details>
+      </section>
+      </div>
       <aside class="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
       </div>
       <div id="history" class="tab-panel">

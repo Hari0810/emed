@@ -82,6 +82,8 @@ export interface SafetyFlag {
 
 export interface CallSummary {
   summary: string;
+  attentionLevel: "continue_monitoring" | "care_team_review" | "urgent_guidance";
+  recommendedNextStep: string;
   symptoms: Array<{
     name: string;
     change: "new" | "worsening" | "stable" | "improving" | "unclear";

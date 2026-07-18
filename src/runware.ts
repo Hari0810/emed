@@ -3,15 +3,18 @@ import { z } from "zod";
 import { config } from "./config.js";
 import type { CallSession, CallSummary } from "./types.js";
 
-let client: ReturnType<typeof createClient> | undefined;
+let client: Awaited<ReturnType<typeof createClient>> | undefined;
 
-function getClient() {
+async function getClient() {
   if (!config.RUNWARE_API_KEY) return undefined;
-  client ??= createClient({
-    apiKey: config.RUNWARE_API_KEY,
-    transport: "websocket",
-    timeout: 20_000
-  });
+  if (!client) {
+    client = await createClient({
+      apiKey: config.RUNWARE_API_KEY,
+      transport: "websocket",
+      timeout: 20_000
+    });
+    await client.connect();
+  }
   return client;
 }
 
@@ -33,7 +36,7 @@ export async function streamAgentReply(
   onToken: (token: string) => void,
   signal?: AbortSignal
 ) {
-  const runware = getClient();
+  const runware = await getClient();
   if (!runware) return false;
 
   const stream = await runware.stream(
@@ -45,7 +48,7 @@ export async function streamAgentReply(
         systemPrompt: agentSystemPrompt,
         temperature: 0.2,
         maxTokens: 90,
-        thinkingLevel: "low"
+        thinkingLevel: "off"
       }
     },
     { signal }
@@ -58,6 +61,8 @@ export async function streamAgentReply(
 
 const callSummarySchema = z.object({
   summary: z.string(),
+  attentionLevel: z.enum(["continue_monitoring", "care_team_review", "urgent_guidance"]),
+  recommendedNextStep: z.string(),
   symptoms: z.array(
     z.object({
       name: z.string(),
@@ -80,6 +85,8 @@ const summaryJsonSchema = {
     additionalProperties: false,
     required: [
       "summary",
+      "attentionLevel",
+      "recommendedNextStep",
       "symptoms",
       "medicationContext",
       "infectionContext",
@@ -88,6 +95,8 @@ const summaryJsonSchema = {
     ],
     properties: {
       summary: { type: "string" },
+      attentionLevel: { enum: ["continue_monitoring", "care_team_review", "urgent_guidance"] },
+      recommendedNextStep: { type: "string" },
       symptoms: {
         type: "array",
         items: {
@@ -111,7 +120,7 @@ const summaryJsonSchema = {
 };
 
 export async function analyseCall(session: CallSession): Promise<CallSummary | undefined> {
-  const runware = getClient();
+  const runware = await getClient();
   if (!runware || session.turns.length === 0) return undefined;
 
   const transcript = session.turns
@@ -124,13 +133,21 @@ export async function analyseCall(session: CallSession): Promise<CallSummary | u
     jsonSchema: summaryJsonSchema,
     settings: {
       systemPrompt:
-        "Extract only explicitly supported observations from this AAV check-in transcript. Do not diagnose, infer causal links, or assign urgency. Put unsupported or ambiguous claims in unsupportedClaims.",
+        "Extract only explicitly supported observations from this AAV check-in transcript. Do not diagnose or infer causal links. Choose attentionLevel: continue_monitoring for no concerning pattern in the transcript, care_team_review when the transcript supports contacting the usual care team, or urgent_guidance only for an explicit urgent warning sign. recommendedNextStep must be a concise, safe action consistent with that level. Never recommend medication changes. Put unsupported or ambiguous claims in unsupportedClaims.",
       temperature: 0,
       maxTokens: 800,
-      thinkingLevel: "low"
+      thinkingLevel: "off"
     },
     messages: [{ role: "user", content: transcript }]
   });
 
-  return callSummarySchema.parse(JSON.parse(result.text));
+  const summary = callSummarySchema.parse(JSON.parse(result.text));
+  if (session.safetyFlags.length) {
+    return {
+      ...summary,
+      attentionLevel: "urgent_guidance",
+      recommendedNextStep: "Seek urgent medical help now. Do not wait for this app or make medication changes unless a clinician tells you to."
+    };
+  }
+  return summary;
 }

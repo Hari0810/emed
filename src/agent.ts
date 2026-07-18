@@ -12,12 +12,13 @@ import {
   updateCall,
   updateStatus
 } from "./store.js";
+import { standardQuestionIds } from "./questions.js";
 
 type RelaySocket = { send: (data: string) => void; readyState: number };
 const openSockets = new Map<string, RelaySocket>();
 const activeResponses = new Map<string, AbortController>();
 
-const fallbackQuestionIds = ["general_change", "infection_context", "neurology_change", "respiratory_change", "renal_change", "medication_context"];
+const fallbackQuestionIds = standardQuestionIds;
 
 function send(socket: RelaySocket, message: unknown) {
   if (socket.readyState === 1) socket.send(JSON.stringify(message));
@@ -42,6 +43,13 @@ function chooseFallbackQuestion(callId: string) {
 function askCatalogueQuestion(callId: string, questionId: string) {
   const question = markQuestionAsked(callId, questionId);
   return question?.prompt ?? "How have you felt compared with your usual self?";
+}
+
+function nextStandardQuestion(callId: string) {
+  const session = getCall(callId);
+  if (!session) return undefined;
+  const questionId = standardQuestionIds[session.questionResponses.length];
+  return questionId ? askCatalogueQuestion(callId, questionId) : undefined;
 }
 
 function urgentMessage() {
@@ -114,6 +122,13 @@ export async function handlePatientPrompt(callId: string, text: string) {
     updateStatus(callId, "completed");
     speak(socket, response);
     setTimeout(() => end(socket, "patient-ended"), 3_000);
+    return;
+  }
+
+  const standardQuestion = nextStandardQuestion(callId);
+  if (standardQuestion) {
+    addTurn(callId, "assistant", standardQuestion);
+    speak(socket, standardQuestion);
     return;
   }
 
@@ -191,6 +206,11 @@ export async function handleWhatsAppPrompt(callId: string, text: string) {
     );
     void finaliseCall(callId);
     return response;
+  }
+
+  const standardQuestion = nextStandardQuestion(callId);
+  if (standardQuestion) {
+    return recordReply(callId, `${standardQuestion} Reply DONE when you have finished.`);
   }
 
   const controller = new AbortController();

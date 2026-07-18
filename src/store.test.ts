@@ -5,6 +5,7 @@ import {
   createAppCheckIn,
   createCall,
   createCheckInPlan,
+  createVoiceCheckIn,
   getOrCreateWhatsAppSession,
   listCalls,
   markQuestionAsked,
@@ -38,13 +39,13 @@ test("stores a versioned question response with raw evidence", () => {
   assert.equal(plan.questionIds[0], "general_change");
 
   const question = markQuestionAsked(session.id, "general_change");
-  assert.equal(question?.version, 1);
+  assert.equal(question?.version, 2);
   const turn = addTurn(session.id, "patient", "My fatigue is much worse this week.");
   assert.ok(turn);
   const response = recordActiveQuestionResponse(session.id, turn);
 
   assert.equal(response?.questionId, "general_change");
-  assert.equal(response?.questionVersion, 1);
+  assert.equal(response?.questionVersion, 2);
   assert.equal(response?.rawAnswer, "My fatigue is much worse this week.");
   assert.equal(response?.value, null);
   assert.equal(response?.evidenceTurnId, turn.id);
@@ -58,4 +59,17 @@ test("persists a submitted app check-in in the local check-in log", () => {
   assert.equal(stored?.status, "completed");
   assert.equal(stored?.summary?.summary, "Patient selected: Fatigue, Joint or muscle pain.");
   assert.equal(stored?.turns[0]?.text, "Fatigue, Joint or muscle pain");
+});
+
+test("persists a browser voice transcript in the local check-in log", () => {
+  const checkIn = createVoiceCheckIn([
+    { speaker: "unflare", text: "How have you felt compared with your usual self?" },
+    { speaker: "you", text: "More tired than usual." }
+  ]);
+  const stored = listCalls().find((item) => item.id === checkIn.id);
+
+  assert.equal(stored?.channel, "app");
+  assert.equal(stored?.status, "completed");
+  assert.equal(stored?.turns[1]?.role, "patient");
+  assert.equal(stored?.turns[1]?.text, "More tired than usual.");
 });

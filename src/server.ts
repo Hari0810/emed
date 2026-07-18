@@ -5,13 +5,17 @@ import twilio from "twilio";
 import { z } from "zod";
 import { attachSocket, finaliseCall, handlePatientPrompt, handleWhatsAppPrompt, interruptReply } from "./agent.js";
 import { config, hasTwilioCredentials, hasWhatsAppCredentials } from "./config.js";
-import { createAppCheckIn, createCall, getCall, getOrCreateWhatsAppSession, listCalls, toPublicCall, updateCall, updateStatus } from "./store.js";
+import { analyseCall } from "./runware.js";
+import { addTurn, createAppCheckIn, createCall, createVoiceCheckIn, getCall, getOrCreateWhatsAppSession, listCalls, setSummary, toPublicCall, updateCall, updateStatus } from "./store.js";
 import type { ConversationRelayMessage } from "./types.js";
 
 const app = Fastify({ logger: true });
-const twilioClient = hasTwilioCredentials()
+const twilioClient = hasTwilioCredentials() || hasWhatsAppCredentials()
   ? twilio(config.TWILIO_ACCOUNT_SID!, config.TWILIO_AUTH_TOKEN!)
   : undefined;
+const whatsappDemoRecipient = "whatsapp:+447492368087";
+const whatsappDemoOpening = "Hi, this is your Unflare check-in demo. Before we continue, do you agree to a short AI-supported health check-in on WhatsApp? It is not emergency care or a diagnosis. Reply YES or NO.";
+let lastWhatsAppDemoAt = 0;
 
 await app.register(formbody);
 await app.register(websocket);
@@ -22,9 +26,11 @@ const callRequestSchema = z.object({
 const appCheckInSchema = z.object({
   symptoms: z.array(z.string().trim().min(1).max(100)).min(1).max(9)
 });
-const whatsappTestSchema = z.object({
-  phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Use an E.164 number, e.g. +447700900123"),
-  message: z.string().trim().min(1).max(2_000)
+const voiceCheckInSchema = z.object({
+  turns: z.array(z.object({
+    speaker: z.enum(["unflare", "you"]),
+    text: z.string().trim().min(1).max(2_000)
+  })).min(2).max(20)
 });
 
 function xmlEscape(value: string) {
@@ -77,41 +83,77 @@ app.get("/api/whatsapp", async () => {
   };
 });
 
-/**
- * Local-only WhatsApp conversation simulator. It deliberately uses the same
- * handler as the Twilio webhook but never calls Twilio or sends a real message.
- */
-app.post("/api/test/whatsapp", async (request, reply) => {
-  if (config.NODE_ENV === "production") {
-    return reply.code(404).send({ error: "WhatsApp testing is only available outside production." });
+/** Starts one real WhatsApp demo at the fixed, explicitly configured demo recipient. */
+app.post("/api/whatsapp/demo", async (request, reply) => {
+  if (!hasWhatsAppCredentials() || !twilioClient) {
+    return reply.code(503).send({ error: "WhatsApp is not configured. Add Twilio credentials and TWILIO_WHATSAPP_FROM to .env." });
+  }
+  if (Date.now() - lastWhatsAppDemoAt < 60_000) {
+    return reply.code(429).send({ error: "A WhatsApp demo was started recently. Please continue it in WhatsApp." });
   }
 
-  const parsed = whatsappTestSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid WhatsApp test message" });
+  const session = getOrCreateWhatsAppSession(whatsappDemoRecipient);
+  try {
+    const message = await twilioClient.messages.create({
+      from: config.TWILIO_WHATSAPP_FROM!,
+      to: whatsappDemoRecipient,
+      body: whatsappDemoOpening
+    });
+    lastWhatsAppDemoAt = Date.now();
+    addTurn(session.id, "assistant", whatsappDemoOpening);
+    return reply.code(202).send({ messageSid: message.sid, recipient: whatsappDemoRecipient.replace(/^whatsapp:/, "") });
+  } catch (error) {
+    request.log.error(error, "Unable to start WhatsApp demo");
+    return reply.code(502).send({ error: "WhatsApp could not be started. Check the sender, recipient sandbox enrolment, and Twilio credentials." });
   }
-
-  const session = getOrCreateWhatsAppSession(`whatsapp:${parsed.data.phoneNumber}`);
-  const response = await handleWhatsAppPrompt(session.id, parsed.data.message);
-  return {
-    response,
-    session: {
-      id: session.id,
-      status: getCall(session.id)?.status,
-      consent: getCall(session.id)?.consent
-    }
-  };
 });
 
 app.get("/api/check-ins", async () => ({
   checkIns: listCalls().map(toPublicCall)
 }));
 
+app.post("/api/check-ins/:checkInId/summary", async (request, reply) => {
+  const { checkInId } = request.params as { checkInId: string };
+  const checkIn = getCall(checkInId);
+  if (!checkIn) return reply.code(404).send({ error: "Check-in not found." });
+  if (!checkIn.turns.length) return reply.code(400).send({ error: "This check-in has no transcript to summarise." });
+
+  try {
+    const summary = await analyseCall(checkIn);
+    if (!summary) return reply.code(503).send({ error: "AI summaries are unavailable. Add a valid RUNWARE_API_KEY and try again." });
+    setSummary(checkIn.id, summary);
+    return { checkIn: toPublicCall(getCall(checkIn.id)!) };
+  } catch (error) {
+    request.log.error(error, "Unable to generate check-in summary");
+    return reply.code(502).send({ error: "The AI summary could not be generated. Please try again." });
+  }
+});
+
 app.post("/api/check-ins", async (request, reply) => {
   const parsed = appCheckInSchema.safeParse(request.body);
   if (!parsed.success) return reply.code(400).send({ error: "Select at least one symptom." });
   const checkIn = createAppCheckIn(parsed.data.symptoms);
   return reply.code(201).send({ checkIn: toPublicCall(checkIn) });
+});
+
+app.post("/api/check-ins/voice", async (request, reply) => {
+  const parsed = voiceCheckInSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "A voice transcript is required." });
+  const checkIn = createVoiceCheckIn(parsed.data.turns);
+  let summaryGenerated = false;
+  try {
+    const summary = await analyseCall(checkIn);
+    if (summary) {
+      setSummary(checkIn.id, summary);
+      summaryGenerated = true;
+    }
+  } catch (error) {
+    request.log.error(error, "Unable to summarise browser voice check-in");
+  }
+  return reply.code(201).send({
+    checkIn: toPublicCall(getCall(checkIn.id)!),
+    summaryGenerated
+  });
 });
 
 app.post("/api/calls", async (request, reply) => {

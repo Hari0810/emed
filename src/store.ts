@@ -8,6 +8,7 @@ import type {
   SafetyFlag
 } from "./types.js";
 import { getQuestionDefinition, questionCatalogue } from "./questions.js";
+import { detectUrgentSafetyFlag } from "./safety.js";
 import { loadCheckIn, loadOpenWhatsAppCheckIn, listCheckIns, saveCheckIn } from "./db.js";
 
 const calls = new Map<string, CallSession>();
@@ -185,6 +186,7 @@ export function setSummary(id: string, summary: CallSummary) {
 }
 
 export function createAppCheckIn(symptoms: string[]) {
+  const followUpRecommended = symptoms.some((symptom) => ["Breathing or chest symptoms", "Urine changes", "Numbness or weakness"].includes(symptom));
   const session: CallSession = {
     id: randomUUID(),
     channel: "app",
@@ -200,6 +202,10 @@ export function createAppCheckIn(symptoms: string[]) {
       summary: symptoms.includes("No new symptoms")
         ? "No new or worsening symptoms were reported."
         : `Patient selected: ${symptoms.join(", ")}.`,
+      attentionLevel: followUpRecommended ? "care_team_review" : "continue_monitoring",
+      recommendedNextStep: followUpRecommended
+        ? "Contact your usual care team promptly. If symptoms are severe or rapidly worsening, seek urgent medical help."
+        : "Continue monitoring and contact your usual care team if you are concerned or symptoms worsen.",
       symptoms: symptoms.map((name) => ({
         name,
         change: name === "No new symptoms" ? "stable" : "new",
@@ -208,7 +214,7 @@ export function createAppCheckIn(symptoms: string[]) {
       })),
       medicationContext: [],
       infectionContext: symptoms.includes("Fever or infection") ? ["Patient-reported possible infection context"] : [],
-      followUpRecommended: symptoms.some((symptom) => ["Breathing or chest symptoms", "Urine changes", "Numbness or weakness"].includes(symptom)),
+      followUpRecommended,
       unsupportedClaims: []
     }
   };
@@ -219,6 +225,34 @@ export function createAppCheckIn(symptoms: string[]) {
     persist(session);
   }
   return session;
+}
+
+/** Persists the complete browser voice transcript as a local app check-in. */
+export function createVoiceCheckIn(turns: Array<{ speaker: "unflare" | "you"; text: string }>) {
+  const now = new Date().toISOString();
+  const safetyFlags = turns
+    .filter((turn) => turn.speaker === "you")
+    .map((turn) => detectUrgentSafetyFlag(turn.text))
+    .filter((flag): flag is NonNullable<typeof flag> => Boolean(flag))
+    .map((flag) => ({ ...flag, createdAt: now }));
+  const session: CallSession = {
+    id: randomUUID(),
+    channel: "app",
+    phoneNumber: "local-browser-voice",
+    status: safetyFlags.length ? "urgent" : "completed",
+    createdAt: now,
+    startedAt: now,
+    endedAt: now,
+    turns: turns.map((turn) => ({
+      id: randomUUID(),
+      role: turn.speaker === "you" ? "patient" : "assistant",
+      text: turn.text,
+      createdAt: now
+    })),
+    questionResponses: [],
+    safetyFlags
+  };
+  return persist(session);
 }
 
 export function toPublicCall(session: CallSession) {
