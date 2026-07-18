@@ -1,6 +1,7 @@
 import { createClient } from "@runware/sdk";
 import { z } from "zod";
 import { config } from "./config.js";
+import { agentSystemPrompt } from "./diseases/anca-vasculitis/agentConfig.js";
 import type { CallSession, CallSummary } from "./types.js";
 
 let client: ReturnType<typeof createClient> | undefined;
@@ -14,12 +15,6 @@ function getClient() {
   });
   return client;
 }
-
-const agentSystemPrompt = `You are Unflare, a calm and concise AI check-in assistant for people monitored for ANCA-associated vasculitis (AAV).
-
-You are not a clinician, cannot diagnose a flare, and must never advise changes to medication. You must not assert that lifestyle or a medication taper caused symptoms. Treat infections, medication effects, ordinary illness, and disease activity as possible context, not conclusions.
-
-The caller has already consented to this check-in. Ask exactly one concise, plain-language follow-up question (maximum 26 words). Prioritise symptom change, functional impact, infection context, medication adherence, or the approved AAV screening symptoms: sinus/nasal, joints/muscles, breathing/chest, urine, rash, numbness/weakness. Do not repeat questions already answered. Do not give emergency advice; deterministic rules handle it before you are called.`;
 
 function toModelMessages(session: CallSession) {
   return session.turns.slice(-12).map((turn) => ({

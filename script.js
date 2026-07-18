@@ -22,6 +22,18 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.remove('show'), 2600);
 }
 
+function submitCheckIn(selectedSymptoms, noChanges, needsPromptReview) {
+  fetch('/api/checkins', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mood: noChanges ? 'steady' : needsPromptReview ? 'concerning' : 'changed',
+      symptoms: noChanges ? [] : selectedSymptoms,
+      recordedAt: new Date().toISOString()
+    })
+  }).catch(() => {});
+}
+
 function finishCheckIn(selectedSymptoms) {
   const noChanges = selectedSymptoms.includes('No new symptoms');
   const higherAttentionSymptoms = ['Breathing or chest symptoms', 'Urine changes', 'Numbness or weakness'];
@@ -33,6 +45,8 @@ function finishCheckIn(selectedSymptoms) {
   if (needsPromptReview) {
     summary += ' Because this includes a potentially important change, contact your care team promptly. If it is severe or rapidly worsening, seek urgent medical help.';
   }
+
+  submitCheckIn(selectedSymptoms, noChanges, needsPromptReview);
 
   modalTitle.textContent = 'Check-in saved';
   modalCopy.textContent = 'This has been added to your longitudinal record.';

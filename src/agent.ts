@@ -1,4 +1,6 @@
 import { config } from "./config.js";
+import { fallbackQuestions, URGENT_RULES } from "./diseases/anca-vasculitis/agentConfig.js";
+import { recordVoiceLog } from "./diseases/anca-vasculitis/voiceLog.js";
 import { analyseCall, streamAgentReply } from "./runware.js";
 import { classifyConsent, detectUrgentSafetyFlag } from "./safety.js";
 import { addSafetyFlag, addTurn, getCall, setSummary, updateCall, updateStatus } from "./store.js";
@@ -7,14 +9,6 @@ import type { CallSession } from "./types.js";
 type RelaySocket = { send: (data: string) => void; readyState: number };
 const openSockets = new Map<string, RelaySocket>();
 const activeResponses = new Map<string, AbortController>();
-
-const fallbackQuestions = [
-  "Has your energy or ability to do usual activities changed from your normal over the last few days?",
-  "Have you had fever, a recent infection, or persistent sinus or nasal symptoms?",
-  "Have you noticed any joint or muscle aches, rash, numbness, or unusual weakness?",
-  "Have you noticed breathing or chest changes, or any change in your urine?",
-  "Have you taken your medication as prescribed, without making any changes yourself?"
-];
 
 function send(socket: RelaySocket, message: unknown) {
   if (socket.readyState === 1) socket.send(JSON.stringify(message));
@@ -56,7 +50,7 @@ export async function handlePatientPrompt(callId: string, text: string) {
   const patientTurn = addTurn(callId, "patient", text);
   if (!patientTurn) return;
 
-  const urgent = detectUrgentSafetyFlag(text);
+  const urgent = detectUrgentSafetyFlag(text, URGENT_RULES);
   if (urgent) {
     addSafetyFlag(callId, urgent);
     updateStatus(callId, "urgent");
@@ -143,4 +137,5 @@ export async function finaliseCall(callId: string) {
   } catch (error) {
     console.error("Runware post-call analysis failed", error);
   }
+  recordVoiceLog(getCall(callId)!);
 }
