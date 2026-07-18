@@ -84,6 +84,12 @@ call.
   recipient; it is rate-limited to one start per minute.
 - `POST /api/check-ins/voice` stores the browser voice transcript and, when
   `RUNWARE_API_KEY` is configured, saves a schema-validated AI summary with it.
+- `POST /api/wearables`, `POST /api/reports`, and `POST /api/medications` validate
+  and persist simulated wearable readings, clinical results, and medication events.
+- `GET /api/anca/timeline` returns the time-ordered, multimodal monitoring record.
+- `GET /api/anca/signals` returns deterministic slow-burn, taper-timing,
+  delayed-context, side-effect, baseline, and sleep/fatigue findings together with
+  an attention level and a non-emergency recommended next step.
 - `GET /api/whatsapp` supplies the dashboard's WhatsApp launch link without
   exposing any provider credentials.
 - `/twilio/voice`, `/twilio/relay`, and related callbacks implement the Twilio
@@ -94,9 +100,31 @@ call.
 - `src/runware.ts` streams a short Runware reply during the call and produces a
   schema-validated post-call summary.
 
-Check-ins are persisted in a local SQLite file for this hackathon scaffold. Before a real
-deployment, add authenticated user/patient access, encrypted persistent storage,
-auditing, retention controls, a clinically approved escalation policy, and clinical
+Check-ins, wearable readings, clinical results, and medication events are persisted in a
+local SQLite file for this hackathon scaffold. The dashboard uses that durable timeline to
+show supporting evidence; it does not treat a wearable reading, lab result, or correlation
+as proof of active vasculitis.
+
+### AAV monitoring safety boundary
+
+The monitoring engine combines patient-reported symptoms, medication timing, infection
+context, wearable trends, and flagged clinician-ordered results. It detects a pattern that
+may merit attention, not a diagnosis or a proven cause. Its recommendations range from
+continued monitoring to care-team contact and never advise autonomous medication changes.
+
+Urgent guidance is separate: `src/safety.ts` detects immediate red-flag phrases before
+model reasoning. A multi-day trend cannot independently trigger emergency guidance.
+
+### AAV branch reconciliation
+
+The current SQLite-backed monitoring engine is the canonical implementation. It covers the
+slow-burn, steroid-taper, delayed-context, side-effect, sleep/fatigue, early-warning, and
+care-team recommendation behaviours reviewed from `anca-vasculitis`, while retaining the
+newer phone, WhatsApp, and check-in persistence flows. Parallel in-memory stores and
+duplicate AAV modules are intentionally not merged.
+
+Before a real deployment, add authenticated user/patient access, encrypted persistent
+storage, auditing, retention controls, a clinically approved escalation policy, and clinical
 evaluation of the rule and prompt set.
 
 ## MVP architecture
