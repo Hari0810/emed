@@ -1,5 +1,100 @@
 # Unflare backend recommendation
 
+## Live voice-call scaffold
+
+The repository now includes a runnable TypeScript/Fastify voice service in `src/`.
+It uses Twilio ConversationRelay for the telephone connection, speech-to-text, and
+speech output; Runware supplies the live follow-up question and post-call structured
+summary. ConversationRelay means this MVP does not yet use a Runware text-to-speech
+model directly.
+
+### Run locally
+
+```bash
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`. The dashboard’s **Call me for a check-in** button
+will show an explanatory configuration error until the Twilio variables below are
+set. This is intentional: the browser never receives provider keys.
+
+## WhatsApp check-in scaffold
+
+The dashboard also includes **Start in WhatsApp**. It opens the configured
+WhatsApp sender and starts a text-based, AI-supported check-in. WhatsApp messages
+use the same consent prompt, urgent-symptom checks, transcript store, and summary
+pipeline as telephone calls.
+
+### Test it with the Twilio Sandbox
+
+1. In the Twilio Console, activate the **WhatsApp Sandbox** and join it from your
+   test WhatsApp account using the displayed QR code or `join` message.
+2. Run `ngrok http 3001` (or another public HTTPS tunnel) and set
+   `PUBLIC_BASE_URL` in `.env` to its HTTPS URL.
+3. Add your Twilio account credentials and the Sandbox sender to `.env`:
+
+   ```text
+   TWILIO_ACCOUNT_SID=...
+   TWILIO_AUTH_TOKEN=...
+   TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+   ```
+
+   Copy the sender from the Twilio Console rather than relying on the example.
+4. In the Sandbox settings, set **When a message comes in** to:
+
+   ```text
+   https://your-public-host/twilio/whatsapp
+   ```
+
+5. Start the app with `npm run dev`, open `http://localhost:3000`, choose
+   **Start in WhatsApp**, then send `START`. Reply `YES` to consent, then `DONE`
+   when the check-in is complete.
+
+For real deployment, register a WhatsApp sender and obtain patient opt-in. A
+free-form reply is allowed for 24 hours after the patient's last message; outside
+that window, business-initiated messages must use an approved template. Do not put
+symptoms, diagnoses, or clinical results in templates.
+
+### Configure a real test call
+
+1. Run the API behind a public HTTPS tunnel, such as `ngrok http 3001`.
+2. Set `PUBLIC_BASE_URL` to that HTTPS URL. Twilio derives the secure WebSocket
+   endpoint from it automatically.
+3. Add `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, and
+   `DEMO_PHONE_NUMBER` to `.env`, plus `RUNWARE_API_KEY`. The dashboard uses the
+   configured demo recipient so it does not request a phone number on every call.
+4. Complete Twilio ConversationRelay onboarding for the account and ensure the
+   destination number is permitted in the account's current verification/geo rules.
+5. For a localhost tunnel only, set `SKIP_TWILIO_SIGNATURE_VALIDATION=true`. Do
+   not use that setting in production.
+
+The service validates Twilio request signatures by default. It also requires E.164
+phone numbers and an explicit UI confirmation that the person agreed to receive a
+call.
+
+### What is implemented
+
+- `POST /api/calls` starts an outbound call.
+- `GET /api/calls/:callId` returns a masked-number status for the UI.
+- `POST /twilio/whatsapp` accepts inbound WhatsApp messages and returns the next
+  safe check-in response as TwiML.
+- `GET /api/whatsapp` supplies the dashboard's WhatsApp launch link without
+  exposing any provider credentials.
+- `/twilio/voice`, `/twilio/relay`, and related callbacks implement the Twilio
+  ConversationRelay lifecycle.
+- `src/safety.ts` evaluates a deliberately small set of urgent phrase matches before
+  a model is called. It provides urgent-care guidance but never contacts emergency
+  services automatically.
+- `src/runware.ts` streams a short Runware reply during the call and produces a
+  schema-validated post-call summary.
+
+Call sessions are in memory so this remains a hackathon scaffold. Before a real
+deployment, add authenticated user/patient access, encrypted persistent storage,
+auditing, retention controls, a clinically approved escalation policy, and clinical
+evaluation of the rule and prompt set.
+
 ## MVP architecture
 
 Use a small TypeScript API rather than calling AI services from the browser:

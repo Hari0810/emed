@@ -1,10 +1,11 @@
-import type { CallSession, CallSummary } from "../../types.js";
+import type { CallSession, CallSummary, CheckInChannel } from "../../types.js";
 import { DEFAULT_PATIENT_ID } from "./types.js";
 
 export interface VoiceLogEntry {
   id: string;
   patientId: string;
   callId: string;
+  channel: CheckInChannel;
   recordedAt: string;
   summary?: string;
   symptoms: CallSummary["symptoms"];
@@ -31,6 +32,7 @@ export function recordVoiceLog(session: CallSession, patientId = DEFAULT_PATIENT
     id: session.id,
     patientId,
     callId: session.id,
+    channel: session.channel,
     recordedAt: session.endedAt ?? new Date().toISOString(),
     summary: session.summary?.summary,
     symptoms: session.summary?.symptoms ?? [],

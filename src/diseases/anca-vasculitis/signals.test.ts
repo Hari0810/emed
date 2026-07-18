@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { addCheckIn } from "../../checkins/store.js";
 import { addEvent } from "../../medications/store.js";
 import { addResult } from "../../reports/store.js";
 import type { CallSession } from "../../types.js";
@@ -16,24 +15,42 @@ import { recordVoiceLog } from "./voiceLog.js";
 function makeSession(id: string, endedAt: string, overrides: Partial<CallSession> = {}): CallSession {
   return {
     id,
+    channel: "app",
     phoneNumber: "+10000000000",
     status: "completed",
     createdAt: endedAt,
     endedAt,
     turns: [],
+    questionResponses: [],
     safetyFlags: [],
     ...overrides
   };
 }
 
+function recordSymptomCheckIn(patientId: string, id: string, occurredAt: string, symptomName: string) {
+  recordVoiceLog(
+    makeSession(id, occurredAt, {
+      summary: {
+        summary: `Reported ${symptomName}.`,
+        symptoms: [{ name: symptomName, change: "new", duration: null, evidenceTurnIds: [] }],
+        medicationContext: [],
+        infectionContext: [],
+        followUpRecommended: false,
+        unsupportedClaims: []
+      }
+    }),
+    patientId
+  );
+}
+
 test("detectSlowBurn flags a rising trend of vague symptom mentions", () => {
   const patientId = "test-patient-slow-burn";
-  addCheckIn({ patientId, recordedAt: "2026-07-05T09:00:00Z", mood: "Okay", symptoms: ["fatigue"] });
-  addCheckIn({ patientId, recordedAt: "2026-07-06T09:00:00Z", mood: "Okay", symptoms: ["tired"] });
-  addCheckIn({ patientId, recordedAt: "2026-07-12T09:00:00Z", mood: "Low", symptoms: ["fatigue"] });
-  addCheckIn({ patientId, recordedAt: "2026-07-14T09:00:00Z", mood: "Low", symptoms: ["joint ache"] });
-  addCheckIn({ patientId, recordedAt: "2026-07-16T09:00:00Z", mood: "Low", symptoms: ["sinus headache"] });
-  addCheckIn({ patientId, recordedAt: "2026-07-17T09:00:00Z", mood: "Low", symptoms: ["fatigue"] });
+  recordSymptomCheckIn(patientId, "checkin-1", "2026-07-05T09:00:00Z", "fatigue");
+  recordSymptomCheckIn(patientId, "checkin-2", "2026-07-06T09:00:00Z", "tired");
+  recordSymptomCheckIn(patientId, "checkin-3", "2026-07-12T09:00:00Z", "fatigue");
+  recordSymptomCheckIn(patientId, "checkin-4", "2026-07-14T09:00:00Z", "joint ache");
+  recordSymptomCheckIn(patientId, "checkin-5", "2026-07-16T09:00:00Z", "sinus headache");
+  recordSymptomCheckIn(patientId, "checkin-6", "2026-07-17T09:00:00Z", "fatigue");
 
   const finding = detectSlowBurn(patientId, 14, new Date("2026-07-18T00:00:00Z"));
   assert.ok(finding);
@@ -43,8 +60,7 @@ test("detectSlowBurn flags a rising trend of vague symptom mentions", () => {
 
 test("detectSlowBurn does not flag a flat or improving pattern", () => {
   const patientId = "test-patient-slow-burn-flat";
-  addCheckIn({ patientId, recordedAt: "2026-07-05T09:00:00Z", mood: "Okay", symptoms: ["fatigue"] });
-  addCheckIn({ patientId, recordedAt: "2026-07-06T09:00:00Z", mood: "Good", symptoms: [] });
+  recordSymptomCheckIn(patientId, "checkin-flat-1", "2026-07-05T09:00:00Z", "fatigue");
 
   const finding = detectSlowBurn(patientId, 14, new Date("2026-07-18T00:00:00Z"));
   assert.equal(finding, undefined);

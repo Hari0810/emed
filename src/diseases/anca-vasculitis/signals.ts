@@ -9,11 +9,9 @@ import { getPatientTimeline, type DateRange, type TimelineEntry } from "./timeli
 const SLOW_BURN_TERMS = ["fatigue", "tired", "exhaust", "fever", "joint", "ache", "sinus", "headache"];
 const STEROID_KEYWORDS = ["prednis", "steroid"];
 const SCREENING_KEYWORDS = ["sinus", "joint", "urine", "breath", "chest", "rash", "numbness", "weak"];
-const INFECTION_STRESS_TERMS = ["infection", "cold", "flu", "covid", "sinus infection", "stress", "stressful"];
 
 function textOf(entry: TimelineEntry): string[] {
   if (entry.source === "voice-log") return [...entry.data.symptoms.map((symptom) => symptom.name), ...entry.data.infectionContext];
-  if (entry.source === "check-in") return [...(entry.data.symptoms ?? []), ...(entry.data.freeText ? [entry.data.freeText] : [])];
   return [];
 }
 
@@ -43,7 +41,7 @@ export function detectSlowBurn(patientId = DEFAULT_PATIENT_ID, windowDays = 14, 
   const midpoint = daysAgo(asOf, windowDays / 2);
 
   const mentions = getPatientTimeline(range, patientId)
-    .filter((entry) => entry.source === "voice-log" || entry.source === "check-in")
+    .filter((entry) => entry.source === "voice-log")
     .flatMap((entry) => textOf(entry).filter((text) => matchesAny(text, SLOW_BURN_TERMS)).map((text) => ({ entry, text })));
 
   const early = mentions.filter((mention) => mention.entry.occurredAt < midpoint);
@@ -143,11 +141,10 @@ export function disambiguateSideEffects(patientId = DEFAULT_PATIENT_ID, range?: 
 }
 
 export function detectDelayedFlareCorrelation(patientId = DEFAULT_PATIENT_ID, range?: DateRange): Finding[] {
-  const contextEvents = getPatientTimeline(range, patientId).filter((entry) => {
-    if (entry.source === "voice-log") return entry.data.infectionContext.length > 0;
-    if (entry.source === "check-in") return matchesAny([...(entry.data.symptoms ?? []), entry.data.freeText ?? ""].join(" "), INFECTION_STRESS_TERMS);
-    return false;
-  });
+  const contextEvents = getPatientTimeline(range, patientId).filter(
+    (entry): entry is Extract<TimelineEntry, { source: "voice-log" }> =>
+      entry.source === "voice-log" && entry.data.infectionContext.length > 0
+  );
 
   const findings: Finding[] = [];
   for (const contextEntry of contextEvents) {
@@ -160,8 +157,7 @@ export function detectDelayedFlareCorrelation(patientId = DEFAULT_PATIENT_ID, ra
     );
     if (escalation.length === 0) continue;
 
-    const contextDetail =
-      contextEntry.source === "voice-log" ? contextEntry.data.infectionContext.join(", ") : "possible infection or stress mention";
+    const contextDetail = contextEntry.data.infectionContext.join(", ");
 
     findings.push({
       code: "delayed-flare-correlation",

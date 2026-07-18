@@ -38,7 +38,7 @@ export const KNOWN_SIDE_EFFECT_SYMPTOMS = ["nausea", "brain fog", "fatigue", "in
 export type FlareRiskLevel = "low" | "medium" | "high" | "very-high";
 
 export interface Evidence {
-  source: "voice-log" | "check-in" | "wearable" | "lab-result" | "medication-event";
+  source: "voice-log" | "wearable" | "lab-result" | "medication-event";
   recordId: string;
   occurredAt: string;
   detail: string;

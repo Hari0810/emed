@@ -22,19 +22,23 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.remove('show'), 2600);
 }
 
-function submitCheckIn(selectedSymptoms, noChanges, needsPromptReview) {
-  fetch('/api/checkins', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      mood: noChanges ? 'steady' : needsPromptReview ? 'concerning' : 'changed',
-      symptoms: noChanges ? [] : selectedSymptoms,
-      recordedAt: new Date().toISOString()
-    })
-  }).catch(() => {});
+async function readJsonResponse(response) {
+  const contentType = response.headers.get('content-type') || '';
+  const text = await response.text();
+  if (!contentType.includes('application/json')) {
+    if (/^\s*<!doctype|^\s*<html/i.test(text)) {
+      throw new Error('The Unflare API is not running here. Start it with npm run dev and open http://localhost:3000.');
+    }
+    throw new Error(`The server returned an unexpected response (${response.status}).`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error('The server returned invalid JSON. Check the backend logs and try again.');
+  }
 }
 
-function finishCheckIn(selectedSymptoms) {
+async function finishCheckIn(selectedSymptoms) {
   const noChanges = selectedSymptoms.includes('No new symptoms');
   const higherAttentionSymptoms = ['Breathing or chest symptoms', 'Urine changes', 'Numbness or weakness'];
   const needsPromptReview = selectedSymptoms.some((symptom) => higherAttentionSymptoms.includes(symptom));
@@ -46,14 +50,25 @@ function finishCheckIn(selectedSymptoms) {
     summary += ' Because this includes a potentially important change, contact your care team promptly. If it is severe or rapidly worsening, seek urgent medical help.';
   }
 
-  submitCheckIn(selectedSymptoms, noChanges, needsPromptReview);
-
-  modalTitle.textContent = 'Check-in saved';
-  modalCopy.textContent = 'This has been added to your longitudinal record.';
-  modalContent.className = '';
-  modalContent.innerHTML = `<div class="saved-symptoms${needsPromptReview ? ' urgent' : ''}">${summary} Unflare will compare this check-in with your medication timeline, clinical data, and personal baseline.</div><button class="modal-confirm" type="button">Done</button>`;
-  modalContent.querySelector('button').addEventListener('click', closeModal);
-  modalSafety.hidden = true;
+  try {
+    const response = await fetch('/api/check-ins', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symptoms: selectedSymptoms })
+    });
+    const body = await readJsonResponse(response);
+    if (!response.ok) throw new Error(body.error || 'Unable to save this check-in.');
+    await loadHistory(body.checkIn.id);
+    modalTitle.textContent = 'Check-in saved';
+    modalCopy.textContent = 'This has been added to your longitudinal record.';
+    modalContent.className = '';
+    modalContent.innerHTML = `<div class="saved-symptoms${needsPromptReview ? ' urgent' : ''}">${summary} Unflare will compare this check-in with your medication timeline, clinical data, and personal baseline.</div><button class="modal-confirm" type="button">Done</button>`;
+    modalContent.querySelector('button').addEventListener('click', closeModal);
+    modalSafety.hidden = true;
+  } catch (error) {
+    modalTitle.textContent = 'Unable to save check-in';
+    modalCopy.textContent = error.message || 'Please try again.';
+  }
 }
 
 function bindSymptomOptions() {
@@ -79,7 +94,9 @@ function bindSymptomOptions() {
       window.setTimeout(() => { saveButton.textContent = 'Save check-in'; }, 1500);
       return;
     }
-    finishCheckIn(selected);
+    saveButton.disabled = true;
+    saveButton.textContent = 'Saving…';
+    void finishCheckIn(selected);
   });
 }
 
@@ -103,13 +120,97 @@ function openInformation(title, copy, content, buttonLabel = 'Got it') {
   showModal();
 }
 
-document.querySelector('#checkIn').addEventListener('click', () => openCheckIn());
-document.querySelector('#startCall').addEventListener('click', () => openCheckIn());
+async function pollCallStatus(callId, statusElement) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1800));
+    try {
+      const response = await fetch(`/api/calls/${encodeURIComponent(callId)}`);
+      const body = await readJsonResponse(response);
+      if (!response.ok) return;
+      const { call } = body;
+      statusElement.textContent = `Call status: ${call.status.replace('-', ' ')}.`;
+      if (['completed', 'declined', 'urgent', 'failed'].includes(call.status)) return;
+    } catch {
+      return;
+    }
+  }
+}
+
+function openVoiceCall() {
+  modalTitle.textContent = 'Call me for a symptom check-in';
+  modalCopy.textContent = 'Unflare will call the configured demo number for a short AI-supported check-in. It is not emergency care and does not diagnose a flare.';
+  modalContent.className = 'voice-call-form';
+  modalContent.innerHTML = `
+    <form id="voiceCallForm">
+      <p class="demo-call-number">Demo number configured · ending in 8087</p>
+      <label class="call-consent"><input name="callConsent" type="checkbox" required> I have permission to call the configured demo number.</label>
+      <p id="callFormStatus" class="call-form-status" aria-live="polite"></p>
+      <button class="modal-confirm" type="submit">Start call</button>
+    </form>`;
+  modalSafety.hidden = false;
+  modalSafety.textContent = 'Only start a call to a number that has agreed to receive health check-ins. For urgent symptoms, seek urgent medical help instead.';
+  modalContent.querySelector('form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const submitButton = form.querySelector('button');
+    const status = form.querySelector('#callFormStatus');
+    submitButton.disabled = true;
+    status.textContent = 'Starting your call…';
+    try {
+      const response = await fetch('/api/calls', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const body = await readJsonResponse(response);
+      if (!response.ok) throw new Error(body.error || 'Unable to start the call.');
+      status.textContent = `Calling ${body.call.phoneNumber}. Call status: ${body.call.status}.`;
+      submitButton.textContent = 'Call requested';
+      pollCallStatus(body.call.id, status);
+    } catch (error) {
+      status.textContent = error.message || 'Unable to start the call.';
+      submitButton.disabled = false;
+    }
+  });
+  showModal();
+}
+
+async function openWhatsAppCheckIn() {
+  const pendingWindow = window.open('about:blank', '_blank');
+  if (pendingWindow) pendingWindow.opener = null;
+  try {
+    const response = await fetch('/api/whatsapp');
+    const body = await readJsonResponse(response);
+    if (!response.ok) throw new Error(body.error || 'Unable to load WhatsApp configuration.');
+    if (!body.enabled || !body.launchUrl) {
+      throw new Error('WhatsApp is not configured. Add TWILIO_WHATSAPP_FROM and your Twilio credentials to .env, then restart the server.');
+    }
+    if (pendingWindow) {
+      pendingWindow.location.replace(body.launchUrl);
+    } else {
+      window.location.href = body.launchUrl;
+    }
+    if (body.sandbox) {
+      showToast('Twilio Sandbox opened — join it first if prompted');
+    }
+  } catch (error) {
+    pendingWindow?.close();
+    openInformation(
+      'WhatsApp check-in unavailable',
+      error.message || 'Unable to open WhatsApp.',
+      '<div class="saved-symptoms">Run the complete app with <strong>npm run dev</strong>. For Sandbox testing, activate WhatsApp in the Twilio Console and configure its inbound webhook.</div>'
+    );
+  }
+}
+
+document.querySelector('#checkIn')?.addEventListener('click', () => openCheckIn());
+document.querySelector('#startCall').addEventListener('click', openVoiceCall);
+document.querySelector('#startWhatsApp').addEventListener('click', openWhatsAppCheckIn);
 document.querySelector('#answerButton').addEventListener('click', () => {
   openCheckIn('Have any of these symptoms changed?', 'Your recent medication change and 10-day trend make a targeted check-in useful. Select all that apply.');
 });
 
-document.querySelector('#whyButton').addEventListener('click', () => {
+document.querySelector('#whyButton')?.addEventListener('click', () => {
   openInformation(
     'Why review is recommended',
     'Confidence describes how strongly the combined pattern merits attention — not confidence that you are having a flare.',
@@ -154,81 +255,99 @@ document.querySelectorAll('[data-tab]').forEach((tab) => {
   });
 });
 
-const conversations = {
-  call: {
-    title: 'Targeted symptom call',
-    meta: 'Today · 9:14 AM · 4 minutes',
-    summary: 'Alex reported increasing fatigue, mild joint aches, and persistent sinus pressure. No fever, breathlessness, chest pain, visible blood in urine, rash, numbness, or weakness was reported.',
-    tags: [['Pattern', 'Changed'], ['Attention', 'Review', 'review-risk'], ['Next step', 'Care team']],
-    messages: [
-      ['unflare', 'Hi Alex. Your activity and resting heart rate have both shifted. Has your fatigue changed too?'],
-      ['you', 'Yes, I’ve felt more tired each day, and my joints are a little achy.'],
-      ['unflare', 'Have you noticed sinus symptoms, fever, breathing changes, urine changes, a rash, numbness, or unusual weakness?'],
-      ['you', 'Some sinus pressure that hasn’t cleared, but none of the other symptoms.']
-    ]
-  },
-  chat: {
-    title: 'Daily symptom check-in',
-    meta: 'Thursday · 7:42 PM · Chat',
-    summary: 'Alex felt more drained than usual for the third day. Activity was below baseline. No urgent warning symptoms were reported.',
-    tags: [['Fatigue', 'Increasing'], ['Attention', 'Monitor'], ['Follow-up', '48 hours']],
-    messages: [
-      ['unflare', 'How does your energy compare with your usual level today?'],
-      ['you', 'Lower again. I’ve been more drained each evening this week.'],
-      ['unflare', 'Thanks. I’ll add that change to the pattern and ask again if it continues.']
-    ]
-  },
-  call2: {
-    title: 'Medication follow-up',
-    meta: '14 July · 10:30 AM · 3 minutes',
-    summary: 'Prednisone was reduced from 10 mg to 7.5 mg on 9 July as directed by the care team. Alex reported taking 96% of scheduled doses and making no unplanned medication changes.',
-    tags: [['Dose', '7.5 mg'], ['Adherence', '96%'], ['Prescriber', 'Confirmed']],
-    messages: [
-      ['unflare', 'Your record shows a prescribed prednisone reduction on 9 July. Is 7.5 mg still your current dose?'],
-      ['you', 'Yes. I missed one dose this month but haven’t changed anything else.'],
-      ['unflare', 'Thanks. Keep taking it as prescribed and contact your care team before making any changes.']
-    ]
-  },
-  chat2: {
-    title: 'Infection follow-up',
-    meta: '11 July · 8:05 AM · Chat',
-    summary: 'Cold symptoms were improving after four days. Alex reported nasal congestion but no fever, breathing difficulty, or chest pain.',
-    tags: [['Infection', 'Improving'], ['Fever', 'None'], ['Context', 'Recorded']],
-    messages: [
-      ['unflare', 'How are the cold symptoms you reported earlier this week?'],
-      ['you', 'Mostly better. My nose is still congested, but I don’t have a fever.'],
-      ['unflare', 'Thanks. I’ll keep this infection in your timeline as relevant context.']
-    ]
-  }
-};
+let checkIns = [];
+let activeHistoryFilter = 'all';
 
-function renderTranscript(conversation) {
-  document.querySelector('#transcriptTitle').textContent = conversation.title;
-  document.querySelector('#transcriptMeta').textContent = conversation.meta;
-  document.querySelector('#transcriptSummary').textContent = conversation.summary;
-  document.querySelector('.summary-box > div').innerHTML = conversation.tags.map(([label, value, className = '']) => `<span>${label} <b class="${className}">${value}</b></span>`).join('');
-  document.querySelector('#transcriptMessages').innerHTML = conversation.messages.map(([speaker, text]) => `
-    <div class="message ${speaker === 'you' ? 'user' : 'ai'}">
-      <small>${speaker === 'you' ? 'YOU' : 'UNFLARE'}</small>
-      <p>${text}</p>
-    </div>`).join('');
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+  })[character]);
 }
 
-document.querySelectorAll('.conversation').forEach((item) => {
-  item.addEventListener('click', () => {
-    document.querySelectorAll('.conversation').forEach((row) => row.classList.remove('active'));
-    item.classList.add('active');
-    renderTranscript(conversations[item.dataset.conversation]);
+function displayChannel(checkIn) {
+  return checkIn.channel === 'phone' ? 'Phone call' : checkIn.channel === 'whatsapp' ? 'WhatsApp chat' : 'App check-in';
+}
+
+function displayTitle(checkIn) {
+  return checkIn.channel === 'phone' ? 'Phone symptom check-in' : checkIn.channel === 'whatsapp' ? 'WhatsApp symptom check-in' : 'Targeted symptom check-in';
+}
+
+function formatDate(value) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
+function previewFor(checkIn) {
+  const patientTurn = [...(checkIn.turns || [])].reverse().find((turn) => turn.role === 'patient');
+  const preview = patientTurn?.text || checkIn.summary?.summary || 'Check-in started.';
+  return preview.length > 88 ? `${preview.slice(0, 85)}…` : preview;
+}
+
+function kindFor(checkIn) {
+  return checkIn.channel === 'phone' ? 'call' : 'chat';
+}
+
+function renderTranscript(checkIn) {
+  const isCall = checkIn.channel === 'phone';
+  const icon = document.querySelector('#transcriptIcon');
+  icon.className = `conversation-icon ${isCall ? 'call' : 'chat'}`;
+  icon.textContent = isCall ? '☎' : '✦';
+  document.querySelector('#transcriptTitle').textContent = displayTitle(checkIn);
+  document.querySelector('#transcriptMeta').textContent = `${formatDate(checkIn.createdAt)} · ${displayChannel(checkIn)} · ${checkIn.status.replace('-', ' ')}`;
+  document.querySelector('#transcriptSummary').textContent = checkIn.summary?.summary || 'This check-in is still in progress. Its transcript will appear as messages are received.';
+
+  const tags = [
+    ['Status', checkIn.status.replace('-', ' ')],
+    ['Channel', displayChannel(checkIn)]
+  ];
+  if (checkIn.safetyFlags?.length) tags.push(['Attention', 'Urgent']);
+  else if (checkIn.summary?.followUpRecommended) tags.push(['Follow-up', 'Care team']);
+  document.querySelector('#transcriptTags').innerHTML = tags.map(([label, value]) => `<span>${escapeHtml(label)} <b>${escapeHtml(value)}</b></span>`).join('');
+
+  const messages = checkIn.turns || [];
+  document.querySelector('#transcriptMessages').innerHTML = messages.length
+    ? messages.map((turn) => `<div class="message ${turn.role === 'patient' ? 'user' : 'ai'}"><small>${turn.role === 'patient' ? 'YOU' : 'UNFLARE'}</small><p>${escapeHtml(turn.text)}</p></div>`).join('')
+    : '<p class="empty-history">No messages have been recorded yet.</p>';
+}
+
+function renderHistory(selectedId) {
+  const list = document.querySelector('#conversationList');
+  const visible = checkIns.filter((checkIn) => activeHistoryFilter === 'all' || kindFor(checkIn) === activeHistoryFilter);
+  if (!visible.length) {
+    list.innerHTML = '<p class="empty-history">No matching check-ins yet.</p>';
+    return;
+  }
+  const currentId = selectedId || visible[0].id;
+  list.innerHTML = visible.map((checkIn) => {
+    const isCall = kindFor(checkIn) === 'call';
+    return `<button class="conversation${checkIn.id === currentId ? ' active' : ''}" data-check-in-id="${escapeHtml(checkIn.id)}"><span class="conversation-icon ${isCall ? 'call' : 'chat'}">${isCall ? '☎' : '✦'}</span><span><strong>${escapeHtml(displayTitle(checkIn))}</strong><small>${escapeHtml(formatDate(checkIn.createdAt))} · ${escapeHtml(displayChannel(checkIn))}</small><em>${escapeHtml(previewFor(checkIn))}</em></span><b>›</b></button>`;
+  }).join('');
+  const selected = visible.find((checkIn) => checkIn.id === currentId) || visible[0];
+  renderTranscript(selected);
+  list.querySelectorAll('[data-check-in-id]').forEach((item) => {
+    item.addEventListener('click', () => renderHistory(item.dataset.checkInId));
   });
-});
+}
+
+async function loadHistory(selectedId) {
+  const list = document.querySelector('#conversationList');
+  try {
+    const response = await fetch('/api/check-ins');
+    const body = await readJsonResponse(response);
+    if (!response.ok) throw new Error(body.error || 'Unable to load check-ins.');
+    checkIns = body.checkIns || [];
+    renderHistory(selectedId);
+  } catch (error) {
+    list.innerHTML = `<p class="empty-history">${escapeHtml(error.message || 'Unable to load your check-ins.')}</p>`;
+  }
+}
 
 document.querySelectorAll('[data-filter]').forEach((filter) => {
   filter.addEventListener('click', () => {
+    activeHistoryFilter = filter.dataset.filter;
     document.querySelectorAll('[data-filter]').forEach((item) => item.classList.toggle('active', item === filter));
-    document.querySelectorAll('.conversation').forEach((conversation) => {
-      conversation.hidden = filter.dataset.filter !== 'all' && conversation.dataset.kind !== filter.dataset.filter;
-    });
+    renderHistory();
   });
 });
 
 if (location.hash === '#history') selectTab('history');
+loadHistory();

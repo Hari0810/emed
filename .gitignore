@@ -1,4 +1,9 @@
 node_modules/
 dist/
+.next/
 .env
+data/*.db
+data/*.db-shm
+data/*.db-wal
 *.log
+*.tsbuildinfo
