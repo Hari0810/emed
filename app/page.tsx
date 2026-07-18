@@ -1,8 +1,9 @@
 "use client";
 
+import "./reports.css";
 import { useEffect, useRef, useState } from "react";
 
-type Tab = "dashboard" | "voice" | "history" | "test";
+type Tab = "dashboard" | "wearables" | "voice" | "history" | "reports" | "test";
 type ModalMode = "checkin" | "info" | "voice";
 type VoiceTurn = { speaker: "unflare" | "you"; text: string };
 type StoredTurn = { id: string; role: "patient" | "assistant"; text: string; createdAt: string };
@@ -34,6 +35,29 @@ type TimelineEntry = {
   source: "check-in" | "wearable" | "lab-result" | "medication-event";
   occurredAt: string;
   data: Record<string, unknown>;
+};
+type WearableReading = {
+  id: string;
+  source: string;
+  recordedAt: string;
+  hrvMs?: number;
+  restingHeartRateBpm?: number;
+  spo2Percent?: number;
+  steps?: number;
+  sleep?: { totalMinutes: number; deepMinutes: number; remMinutes: number; awakenings: number };
+};
+type WeeklyReport = {
+  id: string;
+  generatedAt: string;
+  periodStart: string;
+  periodEnd: string;
+  title: string;
+  attentionLevel: "continue_monitoring" | "care_team_review" | "care_team_review_promptly";
+  summary: string;
+  conversationSummary: string;
+  evidence: string[];
+  recommendedNextStep: string;
+  simulated: boolean;
 };
 
 type BrowserSpeechRecognition = {
@@ -98,15 +122,25 @@ function monitoringDate(value: string, includeTime = false) {
     : { month: "short", day: "numeric" }).format(date);
 }
 
+function average(values: Array<number | undefined>) {
+  const numbers = values.filter((value): value is number => typeof value === "number");
+  return numbers.length ? numbers.reduce((sum, value) => sum + value, 0) / numbers.length : undefined;
+}
+
+function sleepLabel(minutes?: number) {
+  if (typeof minutes !== "number") return "—";
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 function timelineLabel(entry: TimelineEntry) {
   const data = entry.data as {
-    source?: string; hrvMs?: number; restingHeartRateBpm?: number; steps?: number; sleep?: { totalMinutes?: number };
+    source?: string; hrvMs?: number; restingHeartRateBpm?: number; spo2Percent?: number; steps?: number; sleep?: { totalMinutes?: number };
     testName?: string; value?: number; unit?: string; flagged?: boolean;
     drugName?: string; dose?: number; eventType?: string; note?: string;
     summary?: { symptoms?: Array<{ name: string; change: string }> };
   };
   if (entry.source === "wearable") {
-    const measures = [data.restingHeartRateBpm && `${data.restingHeartRateBpm} bpm resting HR`, data.hrvMs && `${data.hrvMs} ms HRV`, data.steps && `${data.steps.toLocaleString()} steps`].filter(Boolean);
+    const measures = [data.restingHeartRateBpm && `${data.restingHeartRateBpm} bpm resting HR`, data.hrvMs && `${data.hrvMs} ms HRV`, data.spo2Percent && `${data.spo2Percent}% SpO₂`, data.steps && `${data.steps.toLocaleString()} steps`].filter(Boolean);
     return measures.join(" · ") || "Wearable reading recorded";
   }
   if (entry.source === "lab-result") return `${data.testName ?? "Clinical result"} ${data.value ?? ""}${data.unit ?? ""}${data.flagged ? " · outside reference range" : ""}`;
@@ -155,11 +189,18 @@ export default function Home() {
   const [signalsError, setSignalsError] = useState("");
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [timelineError, setTimelineError] = useState("");
+  const [wearables, setWearables] = useState<WearableReading[]>([]);
+  const [wearablesLoading, setWearablesLoading] = useState(false);
+  const [wearablesError, setWearablesError] = useState("");
+  const [reports, setReports] = useState<WeeklyReport[]>([]);
+  const [reportsLoading, setReportsLoading] = useState(false);
+  const [reportsError, setReportsError] = useState("");
+  const [activeReportId, setActiveReportId] = useState<string | null>(null);
   const voiceRecognition = useRef<BrowserSpeechRecognition | null>(null);
 
   useEffect(() => {
     const hashTab = window.location.hash.slice(1);
-    if (["dashboard", "voice", "history", "test"].includes(hashTab)) setTab(hashTab as Tab);
+    if (["dashboard", "wearables", "voice", "history", "reports", "test"].includes(hashTab)) setTab(hashTab as Tab);
     const closeOnEscape = (event: KeyboardEvent) => event.key === "Escape" && setModal(null);
     window.addEventListener("keydown", closeOnEscape);
     void loadMonitoring();
@@ -195,8 +236,24 @@ export default function Home() {
     }
   }
 
+  async function loadWearables() {
+    setWearablesLoading(true);
+    try {
+      const response = await fetch("/api/wearables");
+      const data = await response.json() as { readings?: WearableReading[]; error?: string };
+      if (!response.ok || !data.readings) throw new Error(data.error ?? "Wearable data is unavailable.");
+      setWearables(data.readings);
+      setWearablesError("");
+    } catch (error) {
+      setWearables([]);
+      setWearablesError(error instanceof Error ? error.message : "Wearable data is unavailable.");
+    } finally {
+      setWearablesLoading(false);
+    }
+  }
+
   async function loadMonitoring() {
-    await Promise.all([loadSignals(), loadTimeline()]);
+    await Promise.all([loadSignals(), loadTimeline(), loadWearables()]);
   }
 
   useEffect(() => {
@@ -210,6 +267,10 @@ export default function Home() {
 
   useEffect(() => {
     if (tab === "history") void loadHistory();
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab === "reports") void loadReports();
   }, [tab]);
 
   useEffect(() => {
@@ -242,6 +303,23 @@ export default function Home() {
       setHistoryError(error instanceof Error ? error.message : "Could not load your saved check-ins.");
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  async function loadReports() {
+    setReportsLoading(true);
+    setReportsError("");
+    try {
+      const response = await fetch("/api/weekly-reports");
+      const data = await response.json() as { reports?: WeeklyReport[]; error?: string };
+      if (!response.ok || !data.reports) throw new Error(data.error ?? "Could not load weekly reports.");
+      setReports(data.reports);
+      setActiveReportId((current) => current && data.reports!.some((report) => report.id === current) ? current : data.reports![0]?.id ?? null);
+    } catch (error) {
+      setReports([]);
+      setReportsError(error instanceof Error ? error.message : "Could not load weekly reports.");
+    } finally {
+      setReportsLoading(false);
     }
   }
 
@@ -491,15 +569,26 @@ export default function Home() {
     return level === "urgent_guidance" ? "Urgent guidance" : level === "care_team_review" ? "Care-team review" : "Continue monitoring";
   }
 
+  function reportAttentionLabel(level: WeeklyReport["attentionLevel"]) {
+    return level === "care_team_review_promptly" ? "Care-team review promptly" : level === "care_team_review" ? "Care-team review" : "Continue monitoring";
+  }
+
   const latestWearable = [...timeline].reverse().find((entry) => entry.source === "wearable");
+  const latestWearableReading = wearables[wearables.length - 1];
+  const recentWearables = wearables.slice(-7);
+  const recentStepsMax = Math.max(...recentWearables.map((reading) => reading.steps ?? 0), 1);
+  const isSimulatedWearableStream = wearables.length > 0 && wearables.every((reading) => reading.source.startsWith("simulated-"));
+  const activeReport = reports.find((report) => report.id === activeReportId) ?? reports[0];
 
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand" aria-label="Unflare"><span className="brand-mark">u</span><span>unflare</span></div>
       <nav>
         <button className={`nav-item ${tab === "dashboard" ? "active" : ""}`} onClick={() => selectTab("dashboard")}><span>⌂</span> Dashboard</button>
+        <button className={`nav-item ${tab === "reports" ? "active" : ""}`} onClick={() => selectTab("reports")}><span>▤</span> Reports</button>
         <button className={`nav-item ${tab === "voice" ? "active" : ""}`} onClick={() => selectTab("voice")}><span>◉</span> Voice check-in</button>
         <button className={`nav-item ${tab === "history" ? "active" : ""}`} onClick={() => selectTab("history")}><span>◷</span> History</button>
+        <button className={`nav-item ${tab === "wearables" ? "active" : ""}`} onClick={() => selectTab("wearables")}><span>⌚</span> Wearables</button>
         <button className={`nav-item ${tab === "test" ? "active" : ""}`} onClick={() => selectTab("test")}><span>◉</span> WhatsApp (beta)</button>
       </nav>
       <div className="sidebar-bottom">
@@ -524,8 +613,8 @@ export default function Home() {
           const latestWearableData = latestWearable?.data as { restingHeartRateBpm?: number; hrvMs?: number; sleep?: { totalMinutes?: number } } | undefined;
           const careTeamSummary = `${copy.headline}\n\n${warning.rationale.join("\n\n")}\n\nSuggested action: ${signals.recommendation.headline}. ${signals.recommendation.detail}`;
           return <>
-            <section className="simple-review" aria-labelledby="attention-title">
-              <div className="simple-review-header"><div><p className="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">{copy.headline}</h2></div><span className={`status-pill ${copy.className}`}>{copy.label}</span></div>
+            <section className={`simple-review attention-review ${copy.className}`} aria-labelledby="attention-title">
+              <div className="simple-review-header"><div><p className="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">{copy.headline}</h2></div><div className={`attention-level-card ${copy.className}`} aria-label={`Attention level: ${copy.label}`}><span>Attention level</span><strong>{copy.label}</strong><small>Signal score {warning.score}</small></div></div>
               <p className="simple-review-lead">{warning.rationale[0] ?? "Your recent monitoring is within your usual pattern."}</p>
               <div className="monitoring-stat-grid" aria-label="Latest monitoring snapshot">
                 <article><span>Attention score</span><strong>{warning.score}<small> / 7+</small></strong><p>Combined trend signals, not a diagnosis.</p></article>
@@ -552,6 +641,28 @@ export default function Home() {
         <aside className="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
       </>}
 
+      {tab === "wearables" && <>
+        <header className="wearables-header"><div><p className="eyebrow">PASSIVE MONITORING</p><h1>Wearable data</h1><p>Daily activity, heart-rate variability, resting heart rate, and sleep are shown alongside your check-ins as supporting context.</p></div><span className="demo-pill">{isSimulatedWearableStream ? "SIMULATED DATA" : "DEVICE DATA"}</span></header>
+        {wearablesLoading ? <p className="monitoring-empty">Loading wearable readings…</p> : wearablesError ? <section className="wearables-empty"><h2>Wearable data is unavailable.</h2><p>{wearablesError}</p><button className="outline-button" onClick={() => void loadWearables()}>Try again</button></section> : !latestWearableReading ? <section className="wearables-empty"><h2>No wearable readings yet.</h2><p>Connect a device or add a reading to start building a personal baseline.</p></section> : <>
+          <section className="wearables-overview" aria-label="Latest wearable snapshot">
+            <div className="wearables-overview-heading"><div><p className="eyebrow">LATEST READING</p><h2>{monitoringDate(latestWearableReading.recordedAt, true)}</h2></div><span>{latestWearableReading.source.replace(/^simulated-/, "Simulated ").replaceAll("-", " ")}</span></div>
+            <div className="wearable-metric-grid">
+              <article><span>Resting heart rate</span><strong>{latestWearableReading.restingHeartRateBpm ?? "—"}<small>{latestWearableReading.restingHeartRateBpm ? " bpm" : ""}</small></strong><p>7-day average {average(recentWearables.map((reading) => reading.restingHeartRateBpm))?.toFixed(0) ?? "—"} bpm</p></article>
+              <article><span>Heart-rate variability</span><strong>{latestWearableReading.hrvMs ?? "—"}<small>{latestWearableReading.hrvMs ? " ms" : ""}</small></strong><p>7-day average {average(recentWearables.map((reading) => reading.hrvMs))?.toFixed(0) ?? "—"} ms</p></article>
+              <article><span>SpO₂</span><strong>{latestWearableReading.spo2Percent ?? "—"}<small>{latestWearableReading.spo2Percent ? " %" : ""}</small></strong><p>7-day average {average(recentWearables.map((reading) => reading.spo2Percent))?.toFixed(0) ?? "—"}%</p></article>
+              <article><span>Steps</span><strong>{latestWearableReading.steps?.toLocaleString() ?? "—"}</strong><p>7-day average {average(recentWearables.map((reading) => reading.steps))?.toFixed(0) ?? "—"} steps</p></article>
+              <article><span>Sleep</span><strong>{sleepLabel(latestWearableReading.sleep?.totalMinutes)}</strong><p>{latestWearableReading.sleep ? `${latestWearableReading.sleep.awakenings} awakening${latestWearableReading.sleep.awakenings === 1 ? "" : "s"}` : "No sleep details"}</p></article>
+            </div>
+          </section>
+          <div className="wearables-grid">
+            <section className="wearables-card" aria-labelledby="steps-title"><div className="wearables-card-heading"><div><p className="eyebrow">ACTIVITY TREND</p><h2 id="steps-title">Steps over the last 7 days</h2></div><span>{average(recentWearables.map((reading) => reading.steps))?.toFixed(0) ?? "—"} avg.</span></div><div className="wearable-bars">{recentWearables.map((reading) => <div key={reading.id}><i style={{ height: `${Math.max(((reading.steps ?? 0) / recentStepsMax) * 100, 4)}%` }} /><span>{monitoringDate(reading.recordedAt).slice(0, 3)}</span></div>)}</div></section>
+            <section className="wearables-card" aria-labelledby="sleep-title"><div className="wearables-card-heading"><div><p className="eyebrow">SLEEP CONTEXT</p><h2 id="sleep-title">Recent sleep</h2></div><span>{sleepLabel(average(recentWearables.map((reading) => reading.sleep?.totalMinutes)))} avg.</span></div><div className="sleep-list">{recentWearables.slice().reverse().map((reading) => <div key={reading.id}><time>{monitoringDate(reading.recordedAt)}</time><span><i style={{ width: `${Math.min(((reading.sleep?.totalMinutes ?? 0) / 540) * 100, 100)}%` }} /></span><b>{sleepLabel(reading.sleep?.totalMinutes)}</b></div>)}</div></section>
+          </div>
+          <section className="wearables-card wearable-log" aria-labelledby="wearable-log-title"><div className="wearables-card-heading"><div><p className="eyebrow">READING LOG</p><h2 id="wearable-log-title">Latest 14 readings</h2></div><button className="text-button" onClick={() => void loadWearables()}>Refresh <span>→</span></button></div><div className="wearable-table-wrap"><table><thead><tr><th>Date</th><th>Resting HR</th><th>HRV</th><th>SpO₂</th><th>Steps</th><th>Sleep</th><th>Source</th></tr></thead><tbody>{wearables.slice(-14).reverse().map((reading) => <tr key={reading.id}><td>{monitoringDate(reading.recordedAt)}</td><td>{reading.restingHeartRateBpm ?? "—"} {reading.restingHeartRateBpm ? "bpm" : ""}</td><td>{reading.hrvMs ?? "—"} {reading.hrvMs ? "ms" : ""}</td><td>{reading.spo2Percent ?? "—"}{reading.spo2Percent ? "%" : ""}</td><td>{reading.steps?.toLocaleString() ?? "—"}</td><td>{sleepLabel(reading.sleep?.totalMinutes)}</td><td>{reading.source.replace(/^simulated-/, "Simulated ").replaceAll("-", " ")}</td></tr>)}</tbody></table></div></section>
+          <aside className="safety-note wearable-safety"><span>i</span><p><strong>Wearables provide context, not answers.</strong> Consumer SpO₂ readings can be imperfect, and normal readings cannot rule out an infection, medication side effects, or vasculitis activity. Continue prescribed treatment and contact your care team about concerning changes.</p></aside>
+        </>}
+      </>}
+
       {tab === "voice" && <>
         <header className="voice-page-header"><div><p className="eyebrow">GUIDED VOICE CHECK-IN</p><h1>Talk through how you&apos;re feeling.</h1><p>Answer a few short questions by voice to add context to your monitoring record.</p></div><span className="demo-pill">BROWSER MICROPHONE</span></header>
         <section className="voice-start-card" aria-labelledby="voice-start-title"><div><span className="voice-start-icon">◌</span><p className="eyebrow">ABOUT 2 MINUTES</p><h2 id="voice-start-title">Start a voice check-in</h2><p>Unflare will ask about changes from your usual self, infections, symptoms, and medication. It supports monitoring and does not diagnose a flare.</p><button className="primary-button" onClick={openVoiceCheckIn}>Start voice check-in</button></div><aside className={`voice-settings-panel ${voiceSettingsOpen ? "is-open" : ""}`}><button className="voice-settings-trigger" type="button" aria-label="Voice and pace settings" aria-expanded={voiceSettingsOpen} title="Voice and pace settings" onClick={() => setVoiceSettingsOpen((open) => !open)}>⚙</button>{voiceSettingsOpen && <div className="voice-settings-content"><h3>Voice &amp; pace</h3><p className="voice-settings-copy">Choose a voice installed on this device. A slightly slower pace often sounds more natural.</p><label className="voice-setting"><span>Voice</span><select value={selectedVoiceName} onChange={(event) => setSelectedVoiceName(event.target.value)}><option value="auto">Automatic (best available)</option>{availableVoices.map((voice) => <option key={`${voice.name}-${voice.lang}`} value={voice.name}>{voice.name} · {voice.lang}</option>)}</select></label><label className="voice-setting"><span>Speaking pace <b>{voiceRate.toFixed(2)}×</b></span><input type="range" min="0.8" max="1.08" step="0.04" value={voiceRate} onChange={(event) => setVoiceRate(Number(event.target.value))} /></label><label className="voice-setting"><span>Pitch <b>{voicePitch.toFixed(1)}</b></span><input type="range" min="0.85" max="1.15" step="0.05" value={voicePitch} onChange={(event) => setVoicePitch(Number(event.target.value))} /></label><button className="voice-preview-button" type="button" onClick={() => speakVoice("Hello, I’m here to guide your check-in. How have you been feeling today?")}>Preview voice</button>{availableVoices.length === 0 && <small className="voice-settings-note">Your browser is still loading its installed voices. The automatic voice will be used.</small>}</div>}</aside></section>
@@ -561,6 +672,21 @@ export default function Home() {
         <header className="history-header"><div><p className="eyebrow">LONGITUDINAL RECORD</p><h1>Check-in history</h1><p>Review saved voice, WhatsApp, and phone transcripts from your local record.</p></div></header>
         {historyLoading ? <p className="empty-history">Loading saved check-ins…</p> : historyError ? <p className="empty-history">{historyError}</p> : filteredHistory.length === 0 ? <p className="empty-history">No saved check-ins yet. Complete a voice check-in to see its transcript here.</p> : <section className="history-layout"><div className="conversation-list"><div className="history-filters">{(["all", "app", "whatsapp", "phone"] as const).map((item) => <button key={item} className={historyFilter === item ? "active" : ""} onClick={() => setHistoryFilter(item)}>{item === "all" ? "All" : item === "app" ? "Voice" : item === "whatsapp" ? "WhatsApp" : "Phone"}</button>)}</div>{filteredHistory.map((checkIn) => <button key={checkIn.id} className={`conversation ${activeCheckIn?.id === checkIn.id ? "active" : ""}`} onClick={() => setActiveHistoryId(checkIn.id)}><span className={`conversation-icon ${checkIn.channel === "phone" ? "call" : "chat"}`}>{checkInIcon(checkIn)}</span><span><strong>{checkInTitle(checkIn)}</strong><small>{formatCheckInDate(checkIn.createdAt)} · {checkIn.status}</small><em>{checkInExcerpt(checkIn)}</em></span><b>›</b></button>)}</div>
           {activeCheckIn && <article className="transcript-card"><div className="transcript-head"><div><span className={`conversation-icon ${activeCheckIn.channel === "phone" ? "call" : "chat"}`}>{checkInIcon(activeCheckIn)}</span><div><h2>{checkInTitle(activeCheckIn)}</h2><p>{formatCheckInDate(activeCheckIn.createdAt)} · {activeCheckIn.status}</p></div></div></div>{activeCheckIn.summary ? <div className="summary-box"><p className="eyebrow">AI CHECK-IN SUMMARY</p><p>{activeCheckIn.summary.summary}</p>{activeCheckIn.summary.attentionLevel && activeCheckIn.summary.recommendedNextStep && <div className="summary-bubbles"><span className="summary-bubble attention-bubble">Attention <b className={activeCheckIn.summary.attentionLevel === "urgent_guidance" ? "review-risk" : activeCheckIn.summary.attentionLevel === "care_team_review" ? "review-risk" : "low-risk"}>{attentionLabel(activeCheckIn.summary.attentionLevel)}</b></span><span className="summary-bubble next-step-bubble">Next step <b>{activeCheckIn.summary.recommendedNextStep}</b></span></div>}</div> : <div className="summary-request"><div><p className="eyebrow">AI CHECK-IN SUMMARY</p><p>{summaryCheckInId === activeCheckIn.id ? "Generating a transcript-grounded summary…" : "Generating a concise, transcript-grounded summary for this saved check-in."}</p></div>{summaryError && <small>{summaryError}</small>}</div>}<div className="messages">{activeCheckIn.turns.map((turn) => <div key={turn.id} className={`message ${turn.role === "patient" ? "user" : "ai"}`}><small>{turn.role === "patient" ? "YOU" : "UNFLARE"}</small><p>{turn.text}</p></div>)}</div></article>}
+        </section>}
+      </>}
+
+      {tab === "reports" && <>
+        <header className="reports-header"><div><p className="eyebrow">WEEKLY CLINICAL CONTEXT</p><h1>Medical reports</h1><p>Concise weekly summaries for care-team review, built from check-ins and available monitoring context.</p></div><span className="demo-pill">7 WEEKLY REPORTS</span></header>
+        {reportsLoading ? <p className="empty-history">Preparing weekly reports…</p> : reportsError ? <section className="reports-empty"><h2>Reports are unavailable.</h2><p>{reportsError}</p><button className="outline-button" onClick={() => void loadReports()}>Try again</button></section> : !activeReport ? <section className="reports-empty"><h2>No reports available yet.</h2><p>Your first weekly report will appear once monitoring context is available.</p></section> : <section className="reports-layout">
+          <div className="report-list" aria-label="Weekly report list">{reports.map((report) => <button key={report.id} className={`report-list-item ${activeReport.id === report.id ? "active" : ""}`} onClick={() => setActiveReportId(report.id)}><span className="report-list-icon">▤</span><span><strong>{report.id === reports[0]?.id ? "Today’s report" : `Week ending ${monitoringDate(report.periodEnd)}`}</strong><small>{monitoringDate(report.periodStart)} – {monitoringDate(report.periodEnd)}</small><em>{report.simulated ? "Simulated demo report" : "Generated from saved check-in history"}</em></span><b>›</b></button>)}</div>
+          <article className="report-detail">
+            <div className="report-detail-heading"><div><p className="eyebrow">{activeReport.simulated ? "SIMULATED HISTORICAL REPORT" : "GENERATED TODAY FROM CHAT HISTORY"}</p><h2>{activeReport.title}</h2><p>{monitoringDate(activeReport.periodStart)} – {monitoringDate(activeReport.periodEnd)}</p></div><span className={`report-status ${activeReport.attentionLevel}`}>{reportAttentionLabel(activeReport.attentionLevel)}</span></div>
+            <div className="report-callout"><p className="eyebrow">SUMMARY</p><p>{activeReport.summary}</p></div>
+            <section className="report-section"><p className="eyebrow">CHECK-IN CONVERSATION</p><p>{activeReport.conversationSummary}</p></section>
+            <section className="report-section"><p className="eyebrow">EVIDENCE IN CONTEXT</p><ul>{activeReport.evidence.map((item) => <li key={item}>{item}</li>)}</ul></section>
+            <section className="report-next-step"><p className="eyebrow">SAFE NEXT STEP</p><p>{activeReport.recommendedNextStep}</p></section>
+            <p className="report-disclaimer">This report supports monitoring and care coordination. It does not diagnose a flare, prove a cause, or recommend medication changes.</p>
+          </article>
         </section>}
       </>}
 

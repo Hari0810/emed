@@ -3,6 +3,10 @@ import test from "node:test";
 import { app } from "./server.js";
 
 test("monitoring endpoints validate, persist, and expose timeline signals", async () => {
+  const wearables = await app.inject({ method: "GET", url: "/api/wearables" });
+  assert.equal(wearables.statusCode, 200);
+  assert.ok((wearables.json() as { readings: unknown[] }).readings.length > 0, "a fresh database receives wearable demo readings");
+
   const seeded = await app.inject({ method: "GET", url: "/api/anca/timeline" });
   assert.equal(seeded.statusCode, 200);
   assert.ok((seeded.json() as { timeline: unknown[] }).timeline.length > 0, "a fresh database receives the demo monitoring timeline");
@@ -11,10 +15,11 @@ test("monitoring endpoints validate, persist, and expose timeline signals", asyn
   assert.equal(invalid.statusCode, 400);
 
   const reading = await app.inject({ method: "POST", url: "/api/wearables", payload: {
-    source: "test-watch", recordedAt: "2031-01-01T12:00:00.000Z", restingHeartRateBpm: 68,
+    source: "test-watch", recordedAt: "2031-01-01T12:00:00.000Z", restingHeartRateBpm: 68, spo2Percent: 97,
     sleep: { totalMinutes: 420, deepMinutes: 70, remMinutes: 90, awakenings: 2 }
   } });
   assert.equal(reading.statusCode, 201);
+  assert.equal((reading.json() as { reading: { spo2Percent?: number } }).reading.spo2Percent, 97);
 
   const medication = await app.inject({ method: "POST", url: "/api/medications", payload: {
     drugName: "prednisone", eventType: "taper", dose: 7.5, unit: "mg", occurredAt: "2031-01-01T12:00:00.000Z"

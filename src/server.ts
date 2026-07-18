@@ -5,8 +5,9 @@ import twilio from "twilio";
 import { z } from "zod";
 import { attachSocket, finaliseCall, handlePatientPrompt, handleWhatsAppPrompt, interruptReply } from "./agent.js";
 import { config, hasTwilioCredentials, hasWhatsAppCredentials } from "./config.js";
-import { addLabResult, addMedicationEvent, addWearableReading, computeFlareEarlyWarning, detectDelayedFlareCorrelation, detectSlowBurn, detectTaperRisk, disambiguateSideEffects, getPatientTimeline, recommendAction, seedDemoMonitoringData } from "./monitoring.js";
+import { addLabResult, addMedicationEvent, addWearableReading, computeFlareEarlyWarning, detectDelayedFlareCorrelation, detectSlowBurn, detectTaperRisk, disambiguateSideEffects, getPatientTimeline, getWearableReadings, recommendAction, seedDemoMonitoringData, seedDemoWearableData } from "./monitoring.js";
 import { analyseCall } from "./runware.js";
+import { listWeeklyReports } from "./reports.js";
 import { addTurn, createAppCheckIn, createCall, createVoiceCheckIn, getCall, getOrCreateWhatsAppSession, listCalls, setSummary, toPublicCall, updateCall, updateStatus } from "./store.js";
 import type { ConversationRelayMessage } from "./types.js";
 
@@ -21,6 +22,7 @@ let lastWhatsAppDemoAt = 0;
 await app.register(formbody);
 await app.register(websocket);
 seedDemoMonitoringData();
+seedDemoWearableData();
 
 const callRequestSchema = z.object({
   phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Use an E.164 number, e.g. +447700900123").optional()
@@ -35,7 +37,7 @@ const voiceCheckInSchema = z.object({
   })).min(2).max(20)
 });
 const sleepSchema = z.object({ totalMinutes: z.number().nonnegative(), deepMinutes: z.number().nonnegative(), remMinutes: z.number().nonnegative(), awakenings: z.number().nonnegative() });
-const wearableReadingSchema = z.object({ source: z.string().trim().min(1), recordedAt: z.string().datetime(), hrvMs: z.number().nonnegative().optional(), restingHeartRateBpm: z.number().nonnegative().optional(), steps: z.number().nonnegative().optional(), sleep: sleepSchema.optional() });
+const wearableReadingSchema = z.object({ source: z.string().trim().min(1), recordedAt: z.string().datetime(), hrvMs: z.number().nonnegative().optional(), restingHeartRateBpm: z.number().nonnegative().optional(), spo2Percent: z.number().min(0).max(100).optional(), steps: z.number().nonnegative().optional(), sleep: sleepSchema.optional() });
 const labResultSchema = z.object({ testName: z.string().trim().min(1), value: z.number(), unit: z.string().trim().min(1), referenceRange: z.string().trim().min(1).optional(), flagged: z.boolean().optional(), collectedAt: z.string().datetime(), source: z.string().trim().min(1) });
 const medicationEventSchema = z.object({ drugName: z.string().trim().min(1), dose: z.number().nonnegative().optional(), unit: z.string().trim().min(1).optional(), route: z.string().trim().min(1).optional(), eventType: z.enum(["start", "dose-change", "taper", "infusion", "missed-dose", "taken"]), occurredAt: z.string().datetime(), note: z.string().trim().max(2_000).optional() });
 const timelineQuerySchema = z.object({ from: z.string().datetime().optional(), to: z.string().datetime().optional() });
@@ -118,6 +120,8 @@ app.post("/api/whatsapp/demo", async (request, reply) => {
 app.get("/api/check-ins", async () => ({
   checkIns: listCalls().map(toPublicCall)
 }));
+
+app.get("/api/weekly-reports", async () => ({ reports: listWeeklyReports() }));
 
 app.post("/api/check-ins/:checkInId/summary", async (request, reply) => {
   const { checkInId } = request.params as { checkInId: string };
@@ -204,6 +208,16 @@ app.get("/api/calls/:callId", async (request, reply) => {
   const session = getCall(params.callId);
   if (!session) return reply.code(404).send({ error: "Call not found" });
   return { call: toPublicCall(session) };
+});
+
+app.get("/api/wearables", async (request, reply) => {
+  const parsed = timelineQuerySchema.safeParse(request.query);
+  if (!parsed.success) return reply.code(400).send({ error: "Invalid date range." });
+  const readings = getWearableReadings(parsed.data);
+  return {
+    readings,
+    simulated: readings.length > 0 && readings.every((reading) => reading.source.startsWith("simulated-"))
+  };
 });
 
 app.post("/api/wearables", async (request, reply) => {

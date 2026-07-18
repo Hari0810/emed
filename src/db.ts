@@ -8,7 +8,7 @@ export const DEFAULT_PATIENT_ID = "default-patient";
 export type SleepStages = { totalMinutes: number; deepMinutes: number; remMinutes: number; awakenings: number };
 export type WearableReading = {
   id: string; patientId: string; source: string; recordedAt: string;
-  hrvMs?: number; restingHeartRateBpm?: number; steps?: number; sleep?: SleepStages;
+  hrvMs?: number; restingHeartRateBpm?: number; spo2Percent?: number; steps?: number; sleep?: SleepStages;
 };
 export type LabResult = {
   id: string; patientId: string; testName: string; value: number; unit: string;
@@ -122,7 +122,13 @@ function rangeClause(column: string, range?: DateRange) {
 }
 
 function saveObservation(table: "wearable_readings" | "lab_results" | "medication_events", patientId: string, timestampColumn: string, timestamp: string, value: { id: string }) {
-  db.prepare(`INSERT INTO ${table} (id, patient_id, ${timestampColumn}, payload) VALUES (?, ?, ?, ?)`).run(value.id, patientId, timestamp, JSON.stringify(value));
+  db.prepare(`
+    INSERT INTO ${table} (id, patient_id, ${timestampColumn}, payload) VALUES (?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      patient_id = excluded.patient_id,
+      ${timestampColumn} = excluded.${timestampColumn},
+      payload = excluded.payload
+  `).run(value.id, patientId, timestamp, JSON.stringify(value));
   return value;
 }
 

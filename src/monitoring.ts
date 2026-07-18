@@ -80,6 +80,11 @@ export function getPatientTimeline(range?: DateRange, patientId = DEFAULT_PATIEN
   return entries.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt));
 }
 
+/** Returns the raw wearable stream for the patient-facing wearable view. */
+export function getWearableReadings(range?: DateRange, patientId = DEFAULT_PATIENT_ID) {
+  return listWearableReadings(patientId, range);
+}
+
 export function detectSlowBurn(patientId = DEFAULT_PATIENT_ID, windowDays = 14, asOf = new Date()): Finding | undefined {
   const from = dateDaysFrom(asOf, -windowDays);
   const midpoint = dateDaysFrom(asOf, -windowDays / 2);
@@ -207,7 +212,7 @@ export function seedDemoMonitoringData() {
   const now = new Date();
   for (let day = 21; day >= 1; day--) {
     const occurredAt = dateDaysFrom(now, -day);
-    addWearableReading({ source: "simulated-watch", recordedAt: occurredAt, hrvMs: day > 7 ? 52 : 41, restingHeartRateBpm: day > 7 ? 62 : 71, steps: day > 7 ? 7600 : 5200, sleep: { totalMinutes: day > 7 ? 450 : 390, deepMinutes: 75, remMinutes: 90, awakenings: day > 7 ? 1 : 3 } });
+    addWearableReading({ source: "simulated-watch", recordedAt: occurredAt, hrvMs: day > 7 ? 52 : 41, restingHeartRateBpm: day > 7 ? 62 : 71, spo2Percent: day > 7 ? 98 : 96, steps: day > 7 ? 7600 : 5200, sleep: { totalMinutes: day > 7 ? 450 : 390, deepMinutes: 75, remMinutes: 90, awakenings: day > 7 ? 1 : 3 } });
   }
   addMedicationEvent({ drugName: "prednisone", eventType: "taper", dose: 7.5, unit: "mg", occurredAt: dateDaysFrom(now, -10), note: "Clinician-directed reduction from 10 mg." });
   saveCheckIn(seededCheckIn(13, [{ name: "Fatigue", change: "new", duration: "several days", evidenceTurnIds: [] }], ["Recent respiratory infection"]));
@@ -215,5 +220,40 @@ export function seedDemoMonitoringData() {
   saveCheckIn(seededCheckIn(2, [{ name: "Fatigue", change: "worsening", duration: "ten days", evidenceTurnIds: [] }, { name: "Sinus pressure", change: "new", duration: "one week", evidenceTurnIds: [] }]));
   addLabResult({ testName: "CRP", value: 18, unit: "mg/L", referenceRange: "0–5", flagged: true, collectedAt: dateDaysFrom(now, -1), source: "simulated-lab" });
   setMetadata("anca-demo-seeded", new Date().toISOString());
+  return true;
+}
+
+/**
+ * Ensures the MVP has a wearable stream even when an existing database already
+ * contains check-ins, medications, or lab results. Real readings always win.
+ */
+export function seedDemoWearableData(patientId = DEFAULT_PATIENT_ID) {
+  const existing = listWearableReadings(patientId);
+  if (existing.length > 0) {
+    const simulatedWithoutSpO2 = existing.filter((reading) => reading.source.startsWith("simulated-") && typeof reading.spo2Percent !== "number");
+    simulatedWithoutSpO2.forEach((reading, index) => saveWearableReading({ ...reading, spo2Percent: index % 4 === 0 ? 97 : 98 }));
+    return simulatedWithoutSpO2.length > 0;
+  }
+
+  const now = new Date();
+  for (let day = 13; day >= 0; day--) {
+    const recentChange = day < 5;
+    addWearableReading({
+      patientId,
+      source: "simulated-apple-watch",
+      recordedAt: dateDaysFrom(now, -day),
+      hrvMs: recentChange ? 43 + (day % 3) : 51 + (day % 4),
+      restingHeartRateBpm: recentChange ? 69 + (day % 3) : 61 + (day % 3),
+      spo2Percent: recentChange ? 96 + (day % 2) : 98,
+      steps: recentChange ? 4900 + day * 130 : 7300 + day * 90,
+      sleep: {
+        totalMinutes: recentChange ? 390 + day * 4 : 445 + (day % 3) * 8,
+        deepMinutes: recentChange ? 62 : 78,
+        remMinutes: recentChange ? 78 : 92,
+        awakenings: recentChange ? 3 : 1
+      }
+    });
+  }
+  setMetadata("anca-wearable-demo-seeded", new Date().toISOString());
   return true;
 }
