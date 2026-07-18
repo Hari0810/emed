@@ -611,18 +611,28 @@ export default function Home() {
           const latestMedication = [...timeline].reverse().find((entry) => entry.source === "medication-event");
           const latestLab = [...timeline].reverse().find((entry) => entry.source === "lab-result");
           const latestWearableData = latestWearable?.data as { restingHeartRateBpm?: number; hrvMs?: number; sleep?: { totalMinutes?: number } } | undefined;
+          const latestLabData = latestLab?.data as { flagged?: boolean } | undefined;
+          const physiologyRationale = warning.rationale.find((line) => /HRV|Resting heart rate|Sleep averaged/i.test(line));
+          const storyCards = [
+            signals.slowBurn ? { variable: "Reported symptoms", signal: signals.slowBurn.summary, meaning: "A sustained symptom change can occur with disease activity, infection, medication effects, or another illness." } : null,
+            signals.taperRisk[0] ? { variable: "Medication timing", signal: signals.taperRisk[0].summary, meaning: "The timing is useful context for review, but it does not prove a taper caused the change." } : null,
+            physiologyRationale ? { variable: "Wearable trend", signal: physiologyRationale, meaning: "Wearable shifts can reflect recovery, infection, stress, medication effects, or disease activity; they cannot confirm the reason alone." } : null,
+            latestLabData?.flagged && latestLab ? { variable: "Clinical result", signal: timelineLabel(latestLab), meaning: "A flagged clinician-ordered result supports care-team review but cannot confirm a flare by itself." } : null,
+            signals.sideEffects[0] ? { variable: "Possible medication effect", signal: `${signals.sideEffects[0].symptomName} is currently classified as ${signals.sideEffects[0].classification.replaceAll("-", " ")}.`, meaning: "This comparison helps separate possible side effects from disease activity, but the available record can remain uncertain." } : null
+          ].filter((card): card is { variable: string; signal: string; meaning: string } => Boolean(card)).slice(0, 4);
           const careTeamSummary = `${copy.headline}\n\n${warning.rationale.join("\n\n")}\n\nSuggested action: ${signals.recommendation.headline}. ${signals.recommendation.detail}`;
           return <>
             <section className={`simple-review attention-review ${copy.className}`} aria-labelledby="attention-title">
               <div className="simple-review-header"><div><p className="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">{copy.headline}</h2></div><div className={`attention-level-card ${copy.className}`} aria-label={`Attention level: ${copy.label}`}><span>Attention level</span><strong>{copy.label}</strong><small>Signal score {warning.score}</small></div></div>
               <p className="simple-review-lead">{warning.rationale[0] ?? "Your recent monitoring is within your usual pattern."}</p>
+              {storyCards.length > 0 && <section className="attention-story" aria-labelledby="attention-story-title"><div className="attention-story-heading"><div><p className="eyebrow">THE CURRENT PICTURE</p><h3 id="attention-story-title">What is changing — and what it could mean</h3></div><p>These are possible explanations to review with your care team, not a diagnosis.</p></div><div className="attention-story-cards">{storyCards.map((card) => <article key={card.variable}><span>{card.variable}</span><b>{card.signal}</b><p><strong>Why it matters:</strong> {card.meaning}</p></article>)}</div></section>}
               <div className="monitoring-stat-grid" aria-label="Latest monitoring snapshot">
                 <article><span>Attention score</span><strong>{warning.score}<small> / 7+</small></strong><p>Combined trend signals, not a diagnosis.</p></article>
                 <article><span>Latest wearable</span><strong>{latestWearableData?.restingHeartRateBpm ? `${latestWearableData.restingHeartRateBpm} bpm` : "—"}</strong><p>{latestWearableData?.hrvMs ? `${latestWearableData.hrvMs} ms HRV` : "No heart-rate reading yet"}</p></article>
                 <article><span>Medication context</span><strong>{latestMedication ? (latestMedication.data.drugName as string ?? "Recorded") : "—"}</strong><p>{latestMedication ? timelineLabel(latestMedication) : "No recent medication event"}</p></article>
                 <article><span>Latest clinical result</span><strong>{latestLab ? (latestLab.data.testName as string ?? "Recorded") : "—"}</strong><p>{latestLab ? timelineLabel(latestLab) : "No result recorded"}</p></article>
               </div>
-              <div className="simple-actions"><button className="primary-button" onClick={() => openCheckIn(true)}>Answer a few questions</button><button className="text-button" disabled={summaryReady} onClick={() => { setSummaryReady(true); showToast("✓ Care-team summary prepared"); openInformation("Care-team summary ready", "This summary organises the available evidence for review; it does not diagnose a flare.", careTeamSummary); }}>{summaryReady ? "Summary ready" : "Prepare a care-team summary"} <span>→</span></button></div>
+              <div className="simple-actions"><button className="text-button" disabled={summaryReady} onClick={() => { setSummaryReady(true); showToast("✓ Care-team summary prepared"); openInformation("Care-team summary ready", "This summary organises the available evidence for review; it does not diagnose a flare.", careTeamSummary); }}>{summaryReady ? "Summary ready" : "Prepare a care-team summary"} <span>→</span></button></div>
               <p className="attention-guidance"><strong>{signals.recommendation.headline}.</strong> {signals.recommendation.detail}</p>
             </section>
             <div className="monitoring-dashboard-grid">
@@ -637,7 +647,7 @@ export default function Home() {
               </section>
             </div>
           </>;
-        })() : <section className="simple-review"><p className="eyebrow">MONITORING STATUS</p><h2>Monitoring data is unavailable.</h2><p className="simple-review-lead">{signalsError || "Loading your latest monitoring signals…"}</p><div className="simple-actions"><button className="primary-button" onClick={() => openCheckIn(true)}>Answer a few questions</button><button className="text-button" onClick={() => void loadMonitoring()}>Try again <span>→</span></button></div></section>}
+        })() : <section className="simple-review"><p className="eyebrow">MONITORING STATUS</p><h2>Monitoring data is unavailable.</h2><p className="simple-review-lead">{signalsError || "Loading your latest monitoring signals…"}</p><div className="simple-actions"><button className="text-button" onClick={() => void loadMonitoring()}>Try again <span>→</span></button></div></section>}
         <aside className="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
       </>}
 
