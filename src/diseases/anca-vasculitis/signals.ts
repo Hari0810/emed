@@ -1,12 +1,15 @@
-import { rollingBaseline } from "../../wearables/store.js";
+import { listReadings, rollingBaseline } from "../../wearables/store.js";
 import { listResults } from "../../reports/store.js";
 import { listEvents } from "../../medications/store.js";
 import { DEFAULT_PATIENT_ID, KNOWN_SIDE_EFFECT_SYMPTOMS, type Evidence, type Finding, type FlareRiskLevel } from "./types.js";
 import { getPatientTimeline, type DateRange, type TimelineEntry } from "./timeline.js";
 
 // Deterministic rules only, no model calls. Findings carry evidence, never a diagnosis or causal claim.
+// This engine never recommends emergency care from a multi-day trend — that boundary stays with
+// safety.ts's single-utterance red-flag phrases, which are unconditional and immediate.
 
 const SLOW_BURN_TERMS = ["fatigue", "tired", "exhaust", "fever", "joint", "ache", "sinus", "headache"];
+const FATIGUE_TERMS = ["fatigue", "tired", "exhaust"];
 const STEROID_KEYWORDS = ["prednis", "steroid"];
 const SCREENING_KEYWORDS = ["sinus", "joint", "urine", "breath", "chest", "rash", "numbness", "weak"];
 
@@ -175,6 +178,37 @@ export function detectDelayedFlareCorrelation(patientId = DEFAULT_PATIENT_ID, ra
   return findings;
 }
 
+export function detectRestNeeded(patientId = DEFAULT_PATIENT_ID, asOf = new Date()): Finding | undefined {
+  const recentFrom = daysAgo(asOf, 7);
+  const priorFrom = daysAgo(asOf, 21);
+
+  const recentSleep = listReadings(patientId, { from: recentFrom, to: asOf.toISOString() })
+    .map((reading) => reading.sleep?.totalMinutes)
+    .filter((value): value is number => typeof value === "number");
+  const priorSleep = listReadings(patientId, { from: priorFrom, to: recentFrom })
+    .map((reading) => reading.sleep?.totalMinutes)
+    .filter((value): value is number => typeof value === "number");
+
+  if (recentSleep.length === 0 || priorSleep.length === 0) return undefined;
+
+  const recentAvg = recentSleep.reduce((sum, value) => sum + value, 0) / recentSleep.length;
+  const priorAvg = priorSleep.reduce((sum, value) => sum + value, 0) / priorSleep.length;
+  const declineMinutes = priorAvg - recentAvg;
+  if (declineMinutes < 30) return undefined;
+
+  const fatigueMentions = getPatientTimeline({ from: recentFrom, to: asOf.toISOString() }, patientId)
+    .filter((entry): entry is Extract<TimelineEntry, { source: "voice-log" }> => entry.source === "voice-log")
+    .flatMap((entry) => textOf(entry).filter((text) => matchesAny(text, FATIGUE_TERMS)).map((text) => toEvidence(entry, text)));
+
+  if (fatigueMentions.length === 0) return undefined;
+
+  return {
+    code: "sleep-fatigue-pattern",
+    summary: `Sleep averaged ${Math.round(recentAvg)} min over the last 7 days, down ${Math.round(declineMinutes)} min from the two weeks before, alongside reports of fatigue.`,
+    evidence: fatigueMentions
+  };
+}
+
 export interface FlareEarlyWarning {
   level: FlareRiskLevel;
   score: number;
@@ -220,6 +254,13 @@ export function computeFlareEarlyWarning(patientId = DEFAULT_PATIENT_ID, asOf = 
     rationale.push(`Resting heart rate rose ${rhrBaseline.deviationFromMean.toFixed(1)}bpm above the 14-day baseline.`);
   }
 
+  const restNeeded = detectRestNeeded(patientId, asOf);
+  if (restNeeded) {
+    score += 1;
+    rationale.push(restNeeded.summary);
+    evidence.push(...restNeeded.evidence);
+  }
+
   const recentLabs = listResults(patientId, { from: daysAgo(asOf, 90), to: asOf.toISOString() });
   const flaggedLab = recentLabs.find((lab) => lab.flagged);
   if (flaggedLab) {
@@ -238,4 +279,55 @@ export function computeFlareEarlyWarning(patientId = DEFAULT_PATIENT_ID, asOf = 
   }
 
   return { level, score, rationale, evidence };
+}
+
+export type ActionTier = "self-monitor" | "self-care" | "contact-care-team" | "contact-care-team-promptly";
+
+export interface Recommendation {
+  tier: ActionTier;
+  headline: string;
+  detail: string;
+  evidence: Evidence[];
+}
+
+const TIER_BY_LEVEL: Record<FlareRiskLevel, ActionTier> = {
+  low: "self-monitor",
+  medium: "self-care",
+  high: "contact-care-team",
+  "very-high": "contact-care-team-promptly"
+};
+
+const TIER_HEADLINES: Record<ActionTier, string> = {
+  "self-monitor": "No action needed",
+  "self-care": "Self-care, and keep monitoring",
+  "contact-care-team": "Contact your GP or care team",
+  "contact-care-team-promptly": "Contact your care team promptly"
+};
+
+const TIER_DETAILS: Record<ActionTier, string> = {
+  "self-monitor": "Your recent check-ins, wearable data, and results are within your usual pattern. Continue your usual routine and check-ins.",
+  "self-care": "A few small changes are worth watching. This does not need contact with your care team yet — keep monitoring, and mention it at your next routine appointment if it continues.",
+  "contact-care-team": "Contact your GP or care team this week to discuss these changes. This does not need emergency care.",
+  "contact-care-team-promptly": "Contact your care team promptly, ideally today, to discuss these changes. This does not need emergency care unless you develop severe or rapidly worsening symptoms."
+};
+
+/**
+ * Trend scores never escalate to emergency guidance here, regardless of level —
+ * that boundary belongs to safety.ts's immediate red-flag phrase detection.
+ */
+export function recommendAction(patientId = DEFAULT_PATIENT_ID, asOf = new Date()): Recommendation {
+  const warning = computeFlareEarlyWarning(patientId, asOf);
+  const restNeeded = detectRestNeeded(patientId, asOf);
+  const tier = TIER_BY_LEVEL[warning.level];
+
+  const detail = restNeeded
+    ? `${TIER_DETAILS[tier]} Your sleep has been running short alongside increasing tiredness — prioritise rest and an earlier night while you keep monitoring.`
+    : TIER_DETAILS[tier];
+
+  return {
+    tier,
+    headline: TIER_HEADLINES[tier],
+    detail,
+    evidence: restNeeded ? [...warning.evidence, ...restNeeded.evidence] : warning.evidence
+  };
 }

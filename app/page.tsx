@@ -18,39 +18,22 @@ type SideEffectClassification = {
   evidence: Evidence[];
 };
 type FlareEarlyWarning = { level: FlareRiskLevel; score: number; rationale: string[]; evidence: Evidence[] };
+type ActionTier = "self-monitor" | "self-care" | "contact-care-team" | "contact-care-team-promptly";
+type Recommendation = { tier: ActionTier; headline: string; detail: string; evidence: Evidence[] };
 type SignalsResponse = {
   slowBurn: Finding | null;
   taperRisk: Finding[];
   sideEffects: SideEffectClassification[];
   delayedCorrelation: Finding[];
   flareEarlyWarning: FlareEarlyWarning;
+  recommendation: Recommendation;
 };
 
-const attentionCopy: Record<FlareRiskLevel, { pillClass: string; pillText: string; headline: string; guidance: string }> = {
-  low: {
-    pillClass: "",
-    pillText: "● Monitoring",
-    headline: "Steady — no notable changes detected.",
-    guidance: "Keep taking medication as prescribed and continue your usual check-ins."
-  },
-  medium: {
-    pillClass: "attention",
-    pillText: "● Worth watching",
-    headline: "A few small changes are worth watching.",
-    guidance: "Keep taking medication as prescribed unless your care team advises otherwise."
-  },
-  high: {
-    pillClass: "attention",
-    pillText: "● Needs attention",
-    headline: "Care-team review recommended.",
-    guidance: "Keep taking medication as prescribed unless your care team advises otherwise."
-  },
-  "very-high": {
-    pillClass: "urgent",
-    pillText: "● Review promptly",
-    headline: "Prompt care-team review recommended.",
-    guidance: "Contact your care team promptly. If you develop severe or rapidly worsening symptoms, seek urgent medical help instead of waiting."
-  }
+const attentionCopy: Record<FlareRiskLevel, { pillClass: string; pillText: string; headline: string }> = {
+  low: { pillClass: "", pillText: "● Monitoring", headline: "Steady — no notable changes detected." },
+  medium: { pillClass: "attention", pillText: "● Worth watching", headline: "A few small changes are worth watching." },
+  high: { pillClass: "attention", pillText: "● Needs attention", headline: "Care-team review recommended." },
+  "very-high": { pillClass: "urgent", pillText: "● Review promptly", headline: "Prompt care-team review recommended." }
 };
 
 function evidenceLabel(evidence: Evidence) {
@@ -415,6 +398,7 @@ export default function Home() {
         const careTeamSummaryBody = warning
           ? `${copy.headline}\n\n${warning.rationale.join("\n\n")}`
           : "No supporting evidence is available yet.";
+        const recommendation = signals?.recommendation;
         return <>
           <header>
             <div><p className="eyebrow">SATURDAY, 18 JULY · GPA MONITORING</p><h1>Good morning, Alex.</h1><p>Your monitoring update for today.</p></div>
@@ -425,7 +409,7 @@ export default function Home() {
             <p className="attention-lead">{leadText}</p>
             <div className="dashboard-actions"><button className="primary-button" disabled={summaryReady} onClick={() => { setSummaryReady(true); showToast("✓ Care-team summary prepared"); openInformation("Care-team summary ready", "This summary organises the evidence behind your current attention level; it does not diagnose a flare.", careTeamSummaryBody); }}>{summaryReady ? "Summary ready to share" : "Prepare care-team summary"}</button><button className="secondary-button" onClick={() => openCheckIn(true)}>Complete targeted check-in</button></div>
             <div className="evidence-summary" aria-label="Key evidence"><span><b>{findingsCount}</b> signals detected</span><span><b>{warning?.score ?? 0}</b> risk score</span></div>
-            <p className="attention-guidance">{copy.guidance}</p>
+            <p className="attention-guidance">{recommendation ? <><b>{recommendation.headline}.</b> {recommendation.detail}</> : "Loading a recommended next step…"}</p>
             {signalsError && <p className="signals-error">{signalsError}</p>}
           </section>
           <details className="supporting-details">

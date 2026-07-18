@@ -12,7 +12,8 @@ import {
   detectDelayedFlareCorrelation,
   detectSlowBurn,
   detectTaperRisk,
-  disambiguateSideEffects
+  disambiguateSideEffects,
+  recommendAction
 } from "./diseases/anca-vasculitis/signals.js";
 import { recordVoiceLog } from "./diseases/anca-vasculitis/voiceLog.js";
 import { addEvent } from "./medications/store.js";
@@ -246,7 +247,8 @@ app.get("/api/anca/signals", async () => {
     taperRisk: detectTaperRisk(),
     sideEffects: disambiguateSideEffects(),
     delayedCorrelation: detectDelayedFlareCorrelation(),
-    flareEarlyWarning: computeFlareEarlyWarning()
+    flareEarlyWarning: computeFlareEarlyWarning(),
+    recommendation: recommendAction()
   };
 });
 

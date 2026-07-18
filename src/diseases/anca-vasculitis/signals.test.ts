@@ -3,12 +3,15 @@ import test from "node:test";
 import { addEvent } from "../../medications/store.js";
 import { addResult } from "../../reports/store.js";
 import type { CallSession } from "../../types.js";
+import { addReading } from "../../wearables/store.js";
 import {
   computeFlareEarlyWarning,
   detectDelayedFlareCorrelation,
+  detectRestNeeded,
   detectSlowBurn,
   detectTaperRisk,
-  disambiguateSideEffects
+  disambiguateSideEffects,
+  recommendAction
 } from "./signals.js";
 import { recordVoiceLog } from "./voiceLog.js";
 
@@ -199,4 +202,69 @@ test("computeFlareEarlyWarning rises with a flagged lab result", () => {
   assert.ok(warning.score >= 2);
   assert.notEqual(warning.level, "low");
   assert.ok(warning.rationale.some((line) => line.includes("CRP")));
+});
+
+test("detectRestNeeded flags a sleep decline alongside fatigue reports", () => {
+  const patientId = "test-patient-rest-needed";
+  for (const day of [8, 10, 12, 14, 16, 18, 20]) {
+    addReading({ patientId, source: "watch", recordedAt: `2026-06-${day}T06:00:00Z`, sleep: { totalMinutes: 440, deepMinutes: 90, remMinutes: 100, awakenings: 1 } });
+  }
+  for (const day of [1, 3, 5, 7]) {
+    addReading({ patientId, source: "watch", recordedAt: `2026-07-0${day}T06:00:00Z`, sleep: { totalMinutes: 340, deepMinutes: 60, remMinutes: 70, awakenings: 3 } });
+  }
+  recordSymptomCheckIn(patientId, "call-rest-1", "2026-07-06T09:00:00Z", "fatigue");
+
+  const finding = detectRestNeeded(patientId, new Date("2026-07-08T00:00:00Z"));
+  assert.ok(finding);
+  assert.equal(finding?.code, "sleep-fatigue-pattern");
+});
+
+test("detectRestNeeded stays silent when sleep is stable", () => {
+  const patientId = "test-patient-rest-stable";
+  for (const day of [1, 3, 5, 7]) {
+    addReading({ patientId, source: "watch", recordedAt: `2026-07-0${day}T06:00:00Z`, sleep: { totalMinutes: 420, deepMinutes: 90, remMinutes: 100, awakenings: 1 } });
+  }
+  recordSymptomCheckIn(patientId, "call-rest-stable-1", "2026-07-06T09:00:00Z", "fatigue");
+
+  const finding = detectRestNeeded(patientId, new Date("2026-07-08T00:00:00Z"));
+  assert.equal(finding, undefined);
+});
+
+test("recommendAction stays at self-monitor with no supporting data", () => {
+  const recommendation = recommendAction("test-patient-recommend-empty", new Date("2026-07-18T00:00:00Z"));
+  assert.equal(recommendation.tier, "self-monitor");
+});
+
+test("recommendAction escalates to contacting the care team, never to emergency guidance", () => {
+  const patientId = "test-patient-recommend-high";
+  addResult({
+    patientId,
+    testName: "CRP",
+    value: 30,
+    unit: "mg/L",
+    referenceRange: "<5",
+    flagged: true,
+    collectedAt: "2026-07-10T00:00:00Z",
+    source: "lab"
+  });
+  addEvent({ patientId, drugName: "prednisone", dose: 7.5, unit: "mg", eventType: "taper", occurredAt: "2026-06-20T00:00:00Z" });
+  recordSymptomCheckIn(patientId, "call-recommend-1", "2026-06-28T00:00:00Z", "joint pain");
+
+  const recommendation = recommendAction(patientId, new Date("2026-07-18T00:00:00Z"));
+  assert.ok(["contact-care-team", "contact-care-team-promptly"].includes(recommendation.tier));
+  assert.ok(!recommendation.detail.toLowerCase().includes("emergency department"));
+});
+
+test("recommendAction surfaces a rest suggestion when sleep declines alongside fatigue", () => {
+  const patientId = "test-patient-recommend-rest";
+  for (const day of [8, 10, 12, 14, 16, 18, 20]) {
+    addReading({ patientId, source: "watch", recordedAt: `2026-06-${day}T06:00:00Z`, sleep: { totalMinutes: 440, deepMinutes: 90, remMinutes: 100, awakenings: 1 } });
+  }
+  for (const day of [1, 3, 5, 7]) {
+    addReading({ patientId, source: "watch", recordedAt: `2026-07-0${day}T06:00:00Z`, sleep: { totalMinutes: 340, deepMinutes: 60, remMinutes: 70, awakenings: 3 } });
+  }
+  recordSymptomCheckIn(patientId, "call-recommend-rest-1", "2026-07-06T09:00:00Z", "fatigue");
+
+  const recommendation = recommendAction(patientId, new Date("2026-07-08T00:00:00Z"));
+  assert.ok(recommendation.detail.toLowerCase().includes("rest"));
 });
