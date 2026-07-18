@@ -8,6 +8,57 @@ type ConversationKey = "call" | "chat" | "call2" | "chat2";
 type VoiceTurn = { speaker: "unflare" | "you"; text: string };
 type WhatsAppTestTurn = { speaker: "you" | "unflare"; text: string };
 
+type FlareRiskLevel = "low" | "medium" | "high" | "very-high";
+type Evidence = { source: string; recordId: string; occurredAt: string; detail: string };
+type Finding = { code: string; summary: string; evidence: Evidence[] };
+type SideEffectClassification = {
+  symptomName: string;
+  occurredAt: string;
+  classification: "likely-side-effect" | "possible-disease-activity" | "unclear";
+  evidence: Evidence[];
+};
+type FlareEarlyWarning = { level: FlareRiskLevel; score: number; rationale: string[]; evidence: Evidence[] };
+type SignalsResponse = {
+  slowBurn: Finding | null;
+  taperRisk: Finding[];
+  sideEffects: SideEffectClassification[];
+  delayedCorrelation: Finding[];
+  flareEarlyWarning: FlareEarlyWarning;
+};
+
+const attentionCopy: Record<FlareRiskLevel, { pillClass: string; pillText: string; headline: string; guidance: string }> = {
+  low: {
+    pillClass: "",
+    pillText: "● Monitoring",
+    headline: "Steady — no notable changes detected.",
+    guidance: "Keep taking medication as prescribed and continue your usual check-ins."
+  },
+  medium: {
+    pillClass: "attention",
+    pillText: "● Worth watching",
+    headline: "A few small changes are worth watching.",
+    guidance: "Keep taking medication as prescribed unless your care team advises otherwise."
+  },
+  high: {
+    pillClass: "attention",
+    pillText: "● Needs attention",
+    headline: "Care-team review recommended.",
+    guidance: "Keep taking medication as prescribed unless your care team advises otherwise."
+  },
+  "very-high": {
+    pillClass: "urgent",
+    pillText: "● Review promptly",
+    headline: "Prompt care-team review recommended.",
+    guidance: "Contact your care team promptly. If you develop severe or rapidly worsening symptoms, seek urgent medical help instead of waiting."
+  }
+};
+
+function evidenceLabel(evidence: Evidence) {
+  const date = new Date(evidence.occurredAt);
+  const when = Number.isNaN(date.getTime()) ? evidence.occurredAt : date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return `${when} · ${evidence.detail}`;
+}
+
 type BrowserSpeechRecognition = {
   continuous: boolean;
   interimResults: boolean;
@@ -115,13 +166,27 @@ export default function Home() {
   const [whatsAppTestTurns, setWhatsAppTestTurns] = useState<WhatsAppTestTurn[]>([]);
   const [whatsAppTestStatus, setWhatsAppTestStatus] = useState("Send START to begin a simulated WhatsApp check-in.");
   const [whatsAppTestSending, setWhatsAppTestSending] = useState(false);
+  const [signals, setSignals] = useState<SignalsResponse | null>(null);
+  const [signalsError, setSignalsError] = useState("");
   const voiceRecognition = useRef<BrowserSpeechRecognition | null>(null);
+
+  async function loadSignals() {
+    try {
+      const response = await fetch("/api/anca/signals");
+      if (!response.ok) throw new Error();
+      setSignals(await response.json() as SignalsResponse);
+      setSignalsError("");
+    } catch {
+      setSignalsError("Unable to load your latest monitoring signals. Start the API with npm run dev.");
+    }
+  }
 
   useEffect(() => {
     const hashTab = window.location.hash.slice(1);
     if (["dashboard", "voice", "history", "test"].includes(hashTab)) setTab(hashTab as Tab);
     const closeOnEscape = (event: KeyboardEvent) => event.key === "Escape" && setModal(null);
     window.addEventListener("keydown", closeOnEscape);
+    void loadSignals();
     return () => {
       window.removeEventListener("keydown", closeOnEscape);
       voiceRecognition.current?.stop();
@@ -164,15 +229,29 @@ export default function Home() {
       : [...current.filter((item) => item !== "No new symptoms"), symptom]);
   }
 
-  function saveCheckIn() {
+  async function saveCheckIn() {
     if (!selectedSymptoms.length) {
       setSavePrompt("Select at least one option");
       window.setTimeout(() => setSavePrompt("Save check-in"), 1500);
       return;
     }
-    setCheckInSaved(true);
-    setModalTitle("Check-in saved");
-    setModalCopy("This has been added to your longitudinal record.");
+    setSavePrompt("Saving…");
+    try {
+      const response = await fetch("/api/check-ins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symptoms: selectedSymptoms })
+      });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error ?? "Unable to save this check-in.");
+      setCheckInSaved(true);
+      setModalTitle("Check-in saved");
+      setModalCopy("This has been added to your longitudinal record.");
+      void loadSignals();
+    } catch (error) {
+      setSavePrompt(error instanceof Error ? error.message : "Unable to save check-in");
+      window.setTimeout(() => setSavePrompt("Save check-in"), 2200);
+    }
   }
 
   function speakVoice(text: string) {
@@ -324,28 +403,55 @@ export default function Home() {
     </aside>
 
     <main>
-      {tab === "dashboard" && <>
-        <header>
-          <div><p className="eyebrow">SATURDAY, 18 JULY · GPA MONITORING</p><h1>Good morning, Alex.</h1><p>Your monitoring update for today.</p></div>
-          <span className="demo-pill">SIMULATED DATA</span>
-        </header>
-        <section className="attention-panel" aria-labelledby="attention-title">
-          <div className="attention-panel-heading"><div><p className="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">Care-team review recommended.</h2></div><span className="status-pill attention">● Needs attention</span></div>
-          <p className="attention-lead">Small changes have continued for 10 days after your prescribed prednisone reduction. This deserves review, but does not confirm a flare.</p>
-          <div className="dashboard-actions"><button className="primary-button" disabled={summaryReady} onClick={() => { setSummaryReady(true); showToast("✓ Care-team summary prepared"); openInformation("Care-team summary ready", "This summary organises the simulated evidence for review; it does not diagnose a flare.", "10-day sustained change\n\nPrednisone reduced from 10 mg to 7.5 mg on 9 July. Fatigue, mild joint aches, and sinus pressure increased. Daily activity fell 32% and resting heart rate rose 14% from baseline. Adherence: 96%. Recent respiratory infection reported. No urgent warning symptoms reported in today’s check-in.\n\nSuggested action: care-team review."); }}>{summaryReady ? "Summary ready to share" : "Prepare care-team summary"}</button><button className="secondary-button" onClick={() => openCheckIn(true)}>Complete targeted check-in</button></div>
-          <div className="evidence-summary" aria-label="Key evidence"><span><b>10 days</b> sustained change</span><span><b>3</b> symptom changes</span><span><b>+14%</b> resting heart rate</span></div>
-          <p className="attention-guidance">Keep taking medication as prescribed unless your care team advises otherwise.</p>
-        </section>
-        <details className="supporting-details">
-          <summary><span>Why this needs attention</span><small>Medication, symptoms, trends, and recent results</small></summary>
-          <div className="supporting-content">
-            <section className="medication-context" aria-label="Medication context"><div><p className="eyebrow">MEDICATION CONTEXT</p><h2>Prednisone was reduced from 10 mg to 7.5 mg on 9 July.</h2><p>Fatigue, joint aches, and sinus pressure have increased since. A recent respiratory infection is also relevant context.</p></div><div className="context-stats"><span>Current dose <b>7.5 mg</b></span><span>Adherence <b>96%</b></span></div></section>
-            <section className="section-block"><div className="section-title"><div><h2>Signals compared with your usual pattern</h2><p>These signals do not diagnose a flare.</p></div></div><div className="metric-grid"><article className="metric-card"><div className="metric-title"><span>Daily activity</span><em className="alert-tag">Shifted</em></div><strong>5,320 <small>steps/day</small></strong><div className="bars falling" aria-label="Activity declining over seven days"><i style={{ height: "88%" }} /><i style={{ height: "80%" }} /><i style={{ height: "73%" }} /><i style={{ height: "64%" }} /><i style={{ height: "56%" }} /><i className="today" style={{ height: "48%" }} /><i className="future" /></div><div className="chart-labels"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div><p><b className="down">↓ 32%</b> below your usual level</p></article><article className="metric-card"><div className="metric-title"><span>Reported symptoms</span><em className="alert-tag">Increasing</em></div><div className="symptom-list"><div><span>Fatigue</span><b>Moderate · ↑</b></div><div><span>Joint aches</span><b>Mild · New</b></div><div><span>Sinus pressure</span><b>Persistent</b></div></div><p><b className="down">3 changes</b> across recent check-ins</p></article><article className="metric-card"><div className="metric-title"><span>Resting heart rate</span><em className="watch">Watch</em></div><strong>71 <small>bpm today</small></strong><svg className="line-chart warm-chart" viewBox="0 0 300 96" role="img" aria-label="Resting heart rate rising over seven days"><path className="area" d="M0 72 L50 68 L100 61 L150 55 L200 41 L250 31 L300 25 L300 96 L0 96Z" /><path className="line" d="M0 72 L50 68 L100 61 L150 55 L200 41 L250 31 L300 25" /><line x1="0" y1="62" x2="300" y2="62" /></svg><p><b className="down">↑ 14%</b> above your baseline of 62 bpm</p></article></div></section>
-            <section className="clinical-strip" aria-label="Latest clinical data"><div><p className="eyebrow">SIMULATED CLINICAL DATA · 16 JULY</p><h2>Recent results are available to your care team.</h2><p>Wearable data cannot confirm or rule out active vasculitis. Clinical review and clinician-ordered tests remain essential.</p></div><div className="clinical-values"><span>Creatinine <b>89 µmol/L</b><small>Stable</small></span><span>Urine blood <b>Negative</b><small>Dip test</small></span><span>CRP <b>8 mg/L</b><small>From 3 mg/L</small></span></div></section>
-          </div>
-        </details>
-        <aside className="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
-      </>}
+      {tab === "dashboard" && (() => {
+        const warning = signals?.flareEarlyWarning;
+        const copy = attentionCopy[warning?.level ?? "low"];
+        const findingsCount = signals ? (signals.slowBurn ? 1 : 0) + signals.taperRisk.length + signals.delayedCorrelation.length : 0;
+        const leadText = !signals
+          ? "Loading your monitoring signals…"
+          : warning && warning.rationale.length > 0
+            ? warning.rationale[0]
+            : "Your recent check-ins, wearable data, and results are within your usual pattern.";
+        const careTeamSummaryBody = warning
+          ? `${copy.headline}\n\n${warning.rationale.join("\n\n")}`
+          : "No supporting evidence is available yet.";
+        return <>
+          <header>
+            <div><p className="eyebrow">SATURDAY, 18 JULY · GPA MONITORING</p><h1>Good morning, Alex.</h1><p>Your monitoring update for today.</p></div>
+            <span className="demo-pill">SIMULATED DATA</span>
+          </header>
+          <section className="attention-panel" aria-labelledby="attention-title">
+            <div className="attention-panel-heading"><div><p className="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">{copy.headline}</h2></div><span className={`status-pill ${copy.pillClass}`}>{copy.pillText}</span></div>
+            <p className="attention-lead">{leadText}</p>
+            <div className="dashboard-actions"><button className="primary-button" disabled={summaryReady} onClick={() => { setSummaryReady(true); showToast("✓ Care-team summary prepared"); openInformation("Care-team summary ready", "This summary organises the evidence behind your current attention level; it does not diagnose a flare.", careTeamSummaryBody); }}>{summaryReady ? "Summary ready to share" : "Prepare care-team summary"}</button><button className="secondary-button" onClick={() => openCheckIn(true)}>Complete targeted check-in</button></div>
+            <div className="evidence-summary" aria-label="Key evidence"><span><b>{findingsCount}</b> signals detected</span><span><b>{warning?.score ?? 0}</b> risk score</span></div>
+            <p className="attention-guidance">{copy.guidance}</p>
+            {signalsError && <p className="signals-error">{signalsError}</p>}
+          </section>
+          <details className="supporting-details">
+            <summary><span>Why this attention level</span><small>Symptom trends, medication timing, and recent results</small></summary>
+            <div className="supporting-content">
+              <section className="section-block" aria-label="Slow, gradual symptom trend">
+                <div className="section-title"><div><h2>Slow-burn symptom trend</h2><p>Vague symptoms tracked over a rolling two-week window.</p></div></div>
+                {signals?.slowBurn ? <div className="finding-list"><article className="finding-card"><p>{signals.slowBurn.summary}</p><div className="evidence">{signals.slowBurn.evidence.map((item, index) => <span key={index}>{evidenceLabel(item)}</span>)}</div></article></div> : <p className="signals-empty">No rising trend of vague symptoms detected in the recent window.</p>}
+              </section>
+              <section className="section-block" aria-label="Medication taper correlation">
+                <div className="section-title"><div><h2>Medication taper timing</h2><p>Symptom changes in the weeks after a steroid dose change.</p></div></div>
+                {signals && signals.taperRisk.length > 0 ? <div className="finding-list">{signals.taperRisk.map((finding) => <article className="finding-card" key={finding.code + finding.evidence[0]?.recordId}><p>{finding.summary}</p><div className="evidence">{finding.evidence.map((item, index) => <span key={index}>{evidenceLabel(item)}</span>)}</div></article>)}</div> : <p className="signals-empty">No symptom changes have followed a recent medication taper.</p>}
+              </section>
+              <section className="section-block" aria-label="Delayed infection or stress correlation">
+                <div className="section-title"><div><h2>Infection and stress context</h2><p>Earlier context that may relate to a later symptom change — not a confirmed cause.</p></div></div>
+                {signals && signals.delayedCorrelation.length > 0 ? <div className="finding-list">{signals.delayedCorrelation.map((finding) => <article className="finding-card" key={finding.code + finding.evidence[0]?.recordId}><p>{finding.summary}</p><div className="evidence">{finding.evidence.map((item, index) => <span key={index}>{evidenceLabel(item)}</span>)}</div></article>)}</div> : <p className="signals-empty">No infection or stress context precedes a later symptom change.</p>}
+              </section>
+              {signals && signals.sideEffects.length > 0 && <section className="section-block" aria-label="Side effect versus disease activity">
+                <div className="section-title"><div><h2>Symptom vs. medication timing</h2><p>Whether a symptom lines up with a recent dose, or with other screening symptoms instead.</p></div></div>
+                <div className="finding-list">{signals.sideEffects.map((item, index) => <article className="finding-card" key={index}><p><b>{item.symptomName}</b> — {item.classification === "likely-side-effect" ? "likely side effect" : item.classification === "possible-disease-activity" ? "possible disease activity" : "unclear"}</p><div className="evidence">{item.evidence.map((evidenceItem, evidenceIndex) => <span key={evidenceIndex}>{evidenceLabel(evidenceItem)}</span>)}</div></article>)}</div>
+              </section>}
+            </div>
+          </details>
+          <aside className="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
+        </>;
+      })()}
 
       {tab === "voice" && <>
         <header className="voice-page-header"><div><p className="eyebrow">GUIDED VOICE CHECK-IN</p><h1>Talk through how you&apos;re feeling.</h1><p>Answer a few short questions by voice to add context to your monitoring record.</p></div><span className="demo-pill">BROWSER MICROPHONE</span></header>
