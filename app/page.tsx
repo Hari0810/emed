@@ -30,6 +30,11 @@ type SignalsResponse = {
   flareEarlyWarning: { level: FlareRiskLevel; score: number; rationale: string[]; evidence: Evidence[] };
   recommendation: { headline: string; detail: string; evidence: Evidence[] };
 };
+type TimelineEntry = {
+  source: "check-in" | "wearable" | "lab-result" | "medication-event";
+  occurredAt: string;
+  data: Record<string, unknown>;
+};
 
 type BrowserSpeechRecognition = {
   continuous: boolean;
@@ -85,6 +90,35 @@ function evidenceLabel(item: Evidence) {
   return `${when} · ${item.detail}`;
 }
 
+function monitoringDate(value: string, includeTime = false) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, includeTime
+    ? { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }
+    : { month: "short", day: "numeric" }).format(date);
+}
+
+function timelineLabel(entry: TimelineEntry) {
+  const data = entry.data as {
+    source?: string; hrvMs?: number; restingHeartRateBpm?: number; steps?: number; sleep?: { totalMinutes?: number };
+    testName?: string; value?: number; unit?: string; flagged?: boolean;
+    drugName?: string; dose?: number; eventType?: string; note?: string;
+    summary?: { symptoms?: Array<{ name: string; change: string }> };
+  };
+  if (entry.source === "wearable") {
+    const measures = [data.restingHeartRateBpm && `${data.restingHeartRateBpm} bpm resting HR`, data.hrvMs && `${data.hrvMs} ms HRV`, data.steps && `${data.steps.toLocaleString()} steps`].filter(Boolean);
+    return measures.join(" · ") || "Wearable reading recorded";
+  }
+  if (entry.source === "lab-result") return `${data.testName ?? "Clinical result"} ${data.value ?? ""}${data.unit ?? ""}${data.flagged ? " · outside reference range" : ""}`;
+  if (entry.source === "medication-event") return `${data.eventType ?? "Medication update"}: ${data.drugName ?? "Medication"}${data.dose !== undefined ? ` ${data.dose}${data.unit ?? ""}` : ""}`;
+  const symptoms = data.summary?.symptoms?.map((symptom) => `${symptom.name} (${symptom.change})`).join(", ");
+  return symptoms ? `Check-in: ${symptoms}` : "Check-in recorded";
+}
+
+function timelineTitle(source: TimelineEntry["source"]) {
+  return source === "wearable" ? "Wearable reading" : source === "lab-result" ? "Clinical result" : source === "medication-event" ? "Medication context" : "Patient check-in";
+}
+
 export default function Home() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [modal, setModal] = useState<ModalMode | null>(null);
@@ -119,6 +153,8 @@ export default function Home() {
   const [whatsAppDemoStarting, setWhatsAppDemoStarting] = useState(false);
   const [signals, setSignals] = useState<SignalsResponse | null>(null);
   const [signalsError, setSignalsError] = useState("");
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [timelineError, setTimelineError] = useState("");
   const voiceRecognition = useRef<BrowserSpeechRecognition | null>(null);
 
   useEffect(() => {
@@ -126,7 +162,7 @@ export default function Home() {
     if (["dashboard", "voice", "history", "test"].includes(hashTab)) setTab(hashTab as Tab);
     const closeOnEscape = (event: KeyboardEvent) => event.key === "Escape" && setModal(null);
     window.addEventListener("keydown", closeOnEscape);
-    void loadSignals();
+    void loadMonitoring();
     return () => {
       window.removeEventListener("keydown", closeOnEscape);
       voiceRecognition.current?.stop();
@@ -144,6 +180,23 @@ export default function Home() {
       setSignals(null);
       setSignalsError(error instanceof Error ? error.message : "Monitoring data is unavailable.");
     }
+  }
+
+  async function loadTimeline() {
+    try {
+      const response = await fetch("/api/anca/timeline");
+      const data = await response.json() as { timeline?: TimelineEntry[]; error?: string };
+      if (!response.ok || !data.timeline) throw new Error(data.error ?? "Timeline data is unavailable.");
+      setTimeline(data.timeline);
+      setTimelineError("");
+    } catch (error) {
+      setTimeline([]);
+      setTimelineError(error instanceof Error ? error.message : "Timeline data is unavailable.");
+    }
+  }
+
+  async function loadMonitoring() {
+    await Promise.all([loadSignals(), loadTimeline()]);
   }
 
   useEffect(() => {
@@ -248,7 +301,7 @@ export default function Home() {
       setCheckInSaved(true);
       setModalTitle("Check-in saved");
       setModalCopy("This has been added to your longitudinal record.");
-      void loadSignals();
+      void loadMonitoring();
     } catch (error) {
       setSavePrompt(error instanceof Error ? error.message : "Unable to save check-in");
       window.setTimeout(() => setSavePrompt("Save check-in"), 2_200);
@@ -438,6 +491,8 @@ export default function Home() {
     return level === "urgent_guidance" ? "Urgent guidance" : level === "care_team_review" ? "Care-team review" : "Continue monitoring";
   }
 
+  const latestWearable = [...timeline].reverse().find((entry) => entry.source === "wearable");
+
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand" aria-label="Unflare"><span className="brand-mark">u</span><span>unflare</span></div>
@@ -448,7 +503,7 @@ export default function Home() {
         <button className={`nav-item ${tab === "test" ? "active" : ""}`} onClick={() => selectTab("test")}><span>◉</span> WhatsApp (beta)</button>
       </nav>
       <div className="sidebar-bottom">
-        <div className="device-card"><span className="device-icon">⌚</span><div><strong>Apple Watch</strong><small><i /> Synced 4m ago</small></div></div>
+        <div className="device-card"><span className="device-icon">⌚</span><div><strong>Apple Watch</strong><small><i /> {latestWearable ? `Synced ${monitoringDate(latestWearable.occurredAt, true)}` : "Awaiting a reading"}</small></div></div>
         <div className="profile"><div className="avatar">AM</div><div><strong>Alex Morgan</strong><small>alex@example.com</small></div></div>
       </div>
     </aside>
@@ -463,21 +518,37 @@ export default function Home() {
           const warning = signals.flareEarlyWarning;
           const copy = attentionCopy[warning.level];
           const findings = [signals.slowBurn, ...signals.taperRisk, ...signals.delayedCorrelation].filter((item): item is Finding => Boolean(item));
+          const recentTimeline = timeline.slice(-6).reverse();
+          const latestMedication = [...timeline].reverse().find((entry) => entry.source === "medication-event");
+          const latestLab = [...timeline].reverse().find((entry) => entry.source === "lab-result");
+          const latestWearableData = latestWearable?.data as { restingHeartRateBpm?: number; hrvMs?: number; sleep?: { totalMinutes?: number } } | undefined;
           const careTeamSummary = `${copy.headline}\n\n${warning.rationale.join("\n\n")}\n\nSuggested action: ${signals.recommendation.headline}. ${signals.recommendation.detail}`;
           return <>
             <section className="simple-review" aria-labelledby="attention-title">
               <div className="simple-review-header"><div><p className="eyebrow">CURRENT ATTENTION LEVEL</p><h2 id="attention-title">{copy.headline}</h2></div><span className={`status-pill ${copy.className}`}>{copy.label}</span></div>
               <p className="simple-review-lead">{warning.rationale[0] ?? "Your recent monitoring is within your usual pattern."}</p>
+              <div className="monitoring-stat-grid" aria-label="Latest monitoring snapshot">
+                <article><span>Attention score</span><strong>{warning.score}<small> / 7+</small></strong><p>Combined trend signals, not a diagnosis.</p></article>
+                <article><span>Latest wearable</span><strong>{latestWearableData?.restingHeartRateBpm ? `${latestWearableData.restingHeartRateBpm} bpm` : "—"}</strong><p>{latestWearableData?.hrvMs ? `${latestWearableData.hrvMs} ms HRV` : "No heart-rate reading yet"}</p></article>
+                <article><span>Medication context</span><strong>{latestMedication ? (latestMedication.data.drugName as string ?? "Recorded") : "—"}</strong><p>{latestMedication ? timelineLabel(latestMedication) : "No recent medication event"}</p></article>
+                <article><span>Latest clinical result</span><strong>{latestLab ? (latestLab.data.testName as string ?? "Recorded") : "—"}</strong><p>{latestLab ? timelineLabel(latestLab) : "No result recorded"}</p></article>
+              </div>
               <div className="simple-actions"><button className="primary-button" onClick={() => openCheckIn(true)}>Answer a few questions</button><button className="text-button" disabled={summaryReady} onClick={() => { setSummaryReady(true); showToast("✓ Care-team summary prepared"); openInformation("Care-team summary ready", "This summary organises the available evidence for review; it does not diagnose a flare.", careTeamSummary); }}>{summaryReady ? "Summary ready" : "Prepare a care-team summary"} <span>→</span></button></div>
               <p className="attention-guidance"><strong>{signals.recommendation.headline}.</strong> {signals.recommendation.detail}</p>
             </section>
-            <section className="simple-snapshot monitoring-snapshot" aria-labelledby="snapshot-title">
-              <div><p className="eyebrow">EVIDENCE IN CONTEXT</p><h2 id="snapshot-title">What the timeline shows</h2></div>
-              {findings.length ? <div className="monitoring-findings">{findings.map((finding) => <article key={`${finding.code}-${finding.evidence[0]?.recordId ?? "summary"}`}><b>{finding.summary}</b><div>{finding.evidence.slice(0, 3).map((item, index) => <span key={index}>{evidenceLabel(item)}</span>)}</div></article>)}</div> : <p className="monitoring-empty">No sustained symptom or medication-timing pattern is currently detected.</p>}
-              {signals.sideEffects.length > 0 && <div className="monitoring-side-effects"><b>Symptom and medication timing</b>{signals.sideEffects.map((item, index) => <p key={index}>{item.symptomName} is <strong>{item.classification.replaceAll("-", " ")}</strong> based on the available context.</p>)}</div>}
-            </section>
+            <div className="monitoring-dashboard-grid">
+              <section className="simple-snapshot monitoring-snapshot" aria-labelledby="snapshot-title">
+                <div><p className="eyebrow">EVIDENCE IN CONTEXT</p><h2 id="snapshot-title">Why this needs attention</h2></div>
+                {findings.length ? <div className="monitoring-findings">{findings.map((finding) => <article key={`${finding.code}-${finding.evidence[0]?.recordId ?? "summary"}`}><b>{finding.summary}</b><div>{finding.evidence.slice(0, 3).map((item, index) => <span key={index}>{evidenceLabel(item)}</span>)}</div></article>)}</div> : <p className="monitoring-empty">No sustained symptom or medication-timing pattern is currently detected.</p>}
+                {signals.sideEffects.length > 0 && <div className="monitoring-side-effects"><b>Symptom and medication timing</b>{signals.sideEffects.map((item, index) => <p key={index}>{item.symptomName} is <strong>{item.classification.replaceAll("-", " ")}</strong> based on the available context.</p>)}</div>}
+              </section>
+              <section className="simple-snapshot timeline-snapshot" aria-labelledby="timeline-title">
+                <div className="timeline-snapshot-heading"><div><p className="eyebrow">LONGITUDINAL RECORD</p><h2 id="timeline-title">Recent monitoring timeline</h2></div><button className="text-button" onClick={() => selectTab("history")}>View check-ins <span>→</span></button></div>
+                {recentTimeline.length ? <ol className="monitoring-timeline">{recentTimeline.map((entry) => <li key={`${entry.source}-${entry.data.id as string}-${entry.occurredAt}`}><time>{monitoringDate(entry.occurredAt)}</time><span className={`timeline-source ${entry.source}`}>{timelineTitle(entry.source)}</span><p>{timelineLabel(entry)}</p></li>)}</ol> : <p className="monitoring-empty">{timelineError || "No timeline events have been recorded yet."}</p>}
+              </section>
+            </div>
           </>;
-        })() : <section className="simple-review"><p className="eyebrow">MONITORING STATUS</p><h2>Monitoring data is unavailable.</h2><p className="simple-review-lead">{signalsError || "Loading your latest monitoring signals…"}</p><div className="simple-actions"><button className="primary-button" onClick={() => openCheckIn(true)}>Answer a few questions</button><button className="text-button" onClick={() => void loadSignals()}>Try again <span>→</span></button></div></section>}
+        })() : <section className="simple-review"><p className="eyebrow">MONITORING STATUS</p><h2>Monitoring data is unavailable.</h2><p className="simple-review-lead">{signalsError || "Loading your latest monitoring signals…"}</p><div className="simple-actions"><button className="primary-button" onClick={() => openCheckIn(true)}>Answer a few questions</button><button className="text-button" onClick={() => void loadMonitoring()}>Try again <span>→</span></button></div></section>}
         <aside className="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
       </>}
 
