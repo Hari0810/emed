@@ -1,0 +1,18 @@
+# Project-scoped MCP servers for the eMed AAV prototype.
+# Codex loads this file only when the repository is trusted.
+
+[mcp_servers.context7]
+url = "https://mcp.context7.com/mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--isolated", "--headless"]
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+
+[mcp_servers.openaiDeveloperDocs]
+url = "https://developers.openai.com/mcp"
+startup_timeout_sec = 20
+tool_timeout_sec = 60

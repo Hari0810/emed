@@ -2,44 +2,105 @@ const modal = document.querySelector('#modal');
 const modalTitle = document.querySelector('#modalTitle');
 const modalCopy = document.querySelector('#modalCopy');
 const modalContent = document.querySelector('#modalContent');
-const moodOptions = modalContent.innerHTML;
+const modalSafety = document.querySelector('.modal-safety');
+const symptomOptions = modalContent.innerHTML;
 
 function closeModal() {
   modal.classList.remove('open');
   modal.setAttribute('aria-hidden', 'true');
 }
 
-function finishCheckIn(mood) {
-  modalTitle.textContent = 'Check-in saved';
-  modalCopy.textContent = `We’ve recorded that you’re feeling ${mood.toLowerCase()} today.`;
-  modalContent.innerHTML = '<button class="modal-confirm" type="button">Done</button>';
-  modalContent.querySelector('button').addEventListener('click', closeModal);
-}
-
-function openCheckIn(prompt = 'How are you feeling today?', copy = 'This helps Unflare understand what your sensors can’t see.') {
-  modalTitle.textContent = prompt;
-  modalCopy.textContent = copy;
-  modalContent.innerHTML = moodOptions;
-  modalContent.querySelectorAll('button').forEach((button) => {
-    button.addEventListener('click', () => finishCheckIn(button.dataset.mood));
-  });
+function showModal() {
   modal.classList.add('open');
   modal.setAttribute('aria-hidden', 'false');
+}
+
+function showToast(message) {
+  const toast = document.querySelector('#toast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  window.setTimeout(() => toast.classList.remove('show'), 2600);
+}
+
+function finishCheckIn(selectedSymptoms) {
+  const noChanges = selectedSymptoms.includes('No new symptoms');
+  const higherAttentionSymptoms = ['Breathing or chest symptoms', 'Urine changes', 'Numbness or weakness'];
+  const needsPromptReview = selectedSymptoms.some((symptom) => higherAttentionSymptoms.includes(symptom));
+  let summary = noChanges
+    ? 'No new or worsening symptoms were reported.'
+    : `Recorded: ${selectedSymptoms.join(', ')}.`;
+
+  if (needsPromptReview) {
+    summary += ' Because this includes a potentially important change, contact your care team promptly. If it is severe or rapidly worsening, seek urgent medical help.';
+  }
+
+  modalTitle.textContent = 'Check-in saved';
+  modalCopy.textContent = 'This has been added to your longitudinal record.';
+  modalContent.className = '';
+  modalContent.innerHTML = `<div class="saved-symptoms${needsPromptReview ? ' urgent' : ''}">${summary} Unflare will compare this check-in with your medication timeline, clinical data, and personal baseline.</div><button class="modal-confirm" type="button">Done</button>`;
+  modalContent.querySelector('button').addEventListener('click', closeModal);
+  modalSafety.hidden = true;
+}
+
+function bindSymptomOptions() {
+  const optionButtons = [...modalContent.querySelectorAll('[data-symptom]')];
+  const saveButton = modalContent.querySelector('.save-symptoms');
+
+  optionButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      if (button.dataset.symptom === 'No new symptoms') {
+        optionButtons.forEach((option) => option.classList.remove('selected'));
+        button.classList.add('selected');
+      } else {
+        modalContent.querySelector('[data-symptom="No new symptoms"]').classList.remove('selected');
+        button.classList.toggle('selected');
+      }
+    });
+  });
+
+  saveButton.addEventListener('click', () => {
+    const selected = optionButtons.filter((button) => button.classList.contains('selected')).map((button) => button.dataset.symptom);
+    if (!selected.length) {
+      saveButton.textContent = 'Select at least one option';
+      window.setTimeout(() => { saveButton.textContent = 'Save check-in'; }, 1500);
+      return;
+    }
+    finishCheckIn(selected);
+  });
+}
+
+function openCheckIn(prompt = 'What has changed today?', copy = 'Select every new or worsening symptom. This adds context; it does not diagnose a flare.') {
+  modalTitle.textContent = prompt;
+  modalCopy.textContent = copy;
+  modalContent.className = 'symptom-options';
+  modalContent.innerHTML = symptomOptions;
+  modalSafety.hidden = false;
+  bindSymptomOptions();
+  showModal();
+}
+
+function openInformation(title, copy, content, buttonLabel = 'Got it') {
+  modalTitle.textContent = title;
+  modalCopy.textContent = copy;
+  modalContent.className = '';
+  modalContent.innerHTML = `${content}<button class="modal-confirm" type="button">${buttonLabel}</button>`;
+  modalContent.querySelector('button').addEventListener('click', closeModal);
+  modalSafety.hidden = true;
+  showModal();
 }
 
 document.querySelector('#checkIn').addEventListener('click', () => openCheckIn());
 document.querySelector('#startCall').addEventListener('click', () => openCheckIn());
 document.querySelector('#answerButton').addEventListener('click', () => {
-  openCheckIn('Have you felt unwell or under extra stress?', 'Your answer can help explain the change in resting heart rate.');
+  openCheckIn('Have any of these symptoms changed?', 'Your recent medication change and 10-day trend make a targeted check-in useful. Select all that apply.');
 });
 
 document.querySelector('#whyButton').addEventListener('click', () => {
-  modalTitle.textContent = 'How we calculated 78';
-  modalCopy.textContent = 'Your score compares sleep, activity, recovery, heart rate and recent check-ins with your usual range.';
-  modalContent.innerHTML = '<button class="modal-confirm" type="button">Got it</button>';
-  modalContent.querySelector('button').addEventListener('click', closeModal);
-  modal.classList.add('open');
-  modal.setAttribute('aria-hidden', 'false');
+  openInformation(
+    'Why review is recommended',
+    'Confidence describes how strongly the combined pattern merits attention — not confidence that you are having a flare.',
+    '<div class="saved-symptoms">Prednisone 10 → 7.5 mg · Activity −32% · Resting heart rate +14% · Increasing fatigue · New joint aches · Persistent sinus pressure · Recent respiratory infection</div>'
+  );
 });
 
 document.querySelector('#closeModal').addEventListener('click', closeModal);
@@ -50,9 +111,16 @@ document.addEventListener('keydown', (event) => {
 
 document.querySelector('#planButton').addEventListener('click', (event) => {
   const button = event.currentTarget;
-  button.textContent = 'Added to today’s plan';
+  button.textContent = 'Summary ready to share';
   button.disabled = true;
   button.classList.add('is-complete');
+  showToast('✓ Care-team summary prepared');
+  openInformation(
+    'Care-team summary ready',
+    'This summary organises the simulated evidence for review; it does not diagnose a flare.',
+    '<div class="saved-symptoms"><strong>10-day sustained change</strong><br>Prednisone reduced from 10 mg to 7.5 mg on 9 July. Fatigue, mild joint aches, and sinus pressure increased. Daily activity fell 32% and resting heart rate rose 14% from baseline. Adherence: 96%. Recent respiratory infection reported. No urgent warning symptoms reported in today’s check-in.<br><br><strong>Suggested action:</strong> care-team review.</div>',
+    'Done'
+  );
 });
 
 function selectTab(tabName) {
@@ -74,24 +142,49 @@ document.querySelectorAll('[data-tab]').forEach((tab) => {
 
 const conversations = {
   call: {
-    title: 'Weekly health check-in', meta: 'Today · 9:14 AM · 4 minutes',
-    summary: 'Alex reported lower energy since Thursday and a mild headache this morning. No fever, chest pain, or shortness of breath. Hydration may be lower than usual.',
-    messages: [['unflare', 'Hi Alex, I noticed your resting heart rate has been a little higher. How have you been feeling?'], ['you', 'A bit more tired than usual, and I woke up with a mild headache.'], ['unflare', 'Have you had any fever, chest pain, or trouble breathing?'], ['you', 'No, none of those. I probably haven’t had enough water today.']]
+    title: 'Targeted symptom call',
+    meta: 'Today · 9:14 AM · 4 minutes',
+    summary: 'Alex reported increasing fatigue, mild joint aches, and persistent sinus pressure. No fever, breathlessness, chest pain, visible blood in urine, rash, numbness, or weakness was reported.',
+    tags: [['Pattern', 'Changed'], ['Attention', 'Review', 'review-risk'], ['Next step', 'Care team']],
+    messages: [
+      ['unflare', 'Hi Alex. Your activity and resting heart rate have both shifted. Has your fatigue changed too?'],
+      ['you', 'Yes, I’ve felt more tired each day, and my joints are a little achy.'],
+      ['unflare', 'Have you noticed sinus symptoms, fever, breathing changes, urine changes, a rash, numbness, or unusual weakness?'],
+      ['you', 'Some sinus pressure that hasn’t cleared, but none of the other symptoms.']
+    ]
   },
   chat: {
-    title: 'Daily check-in', meta: 'Thursday · 7:42 PM · Chat',
-    summary: 'Alex felt more drained than usual after a busy day. Activity remained normal and no acute symptoms were reported.',
-    messages: [['unflare', 'How was your energy today?'], ['you', 'Lower than usual. I had a busy day and felt drained by the evening.'], ['unflare', 'Thanks — I’ll take that into account alongside your sleep and activity.']]
+    title: 'Daily symptom check-in',
+    meta: 'Thursday · 7:42 PM · Chat',
+    summary: 'Alex felt more drained than usual for the third day. Activity was below baseline. No urgent warning symptoms were reported.',
+    tags: [['Fatigue', 'Increasing'], ['Attention', 'Monitor'], ['Follow-up', '48 hours']],
+    messages: [
+      ['unflare', 'How does your energy compare with your usual level today?'],
+      ['you', 'Lower again. I’ve been more drained each evening this week.'],
+      ['unflare', 'Thanks. I’ll add that change to the pattern and ask again if it continues.']
+    ]
   },
   call2: {
-    title: 'Medication follow-up', meta: '14 July · 10:30 AM · 3 minutes',
-    summary: 'All scheduled medication doses were taken. Alex reported no new side effects or concerns.',
-    messages: [['unflare', 'Were you able to take your medication as planned this week?'], ['you', 'Yes, I haven’t missed any doses.'], ['unflare', 'Good to hear. Have you noticed any new side effects?'], ['you', 'No, nothing new.']]
+    title: 'Medication follow-up',
+    meta: '14 July · 10:30 AM · 3 minutes',
+    summary: 'Prednisone was reduced from 10 mg to 7.5 mg on 9 July as directed by the care team. Alex reported taking 96% of scheduled doses and making no unplanned medication changes.',
+    tags: [['Dose', '7.5 mg'], ['Adherence', '96%'], ['Prescriber', 'Confirmed']],
+    messages: [
+      ['unflare', 'Your record shows a prescribed prednisone reduction on 9 July. Is 7.5 mg still your current dose?'],
+      ['you', 'Yes. I missed one dose this month but haven’t changed anything else.'],
+      ['unflare', 'Thanks. Keep taking it as prescribed and contact your care team before making any changes.']
+    ]
   },
   chat2: {
-    title: 'Sleep check-in', meta: '11 July · 8:05 AM · Chat',
-    summary: 'Sleep was interrupted twice overnight. Alex returned to sleep quickly and felt okay the following morning.',
-    messages: [['unflare', 'Your sleep was interrupted twice last night. How do you feel this morning?'], ['you', 'A little tired, but otherwise okay.'], ['unflare', 'Thanks. I’ll keep an eye on whether that becomes a pattern.']]
+    title: 'Infection follow-up',
+    meta: '11 July · 8:05 AM · Chat',
+    summary: 'Cold symptoms were improving after four days. Alex reported nasal congestion but no fever, breathing difficulty, or chest pain.',
+    tags: [['Infection', 'Improving'], ['Fever', 'None'], ['Context', 'Recorded']],
+    messages: [
+      ['unflare', 'How are the cold symptoms you reported earlier this week?'],
+      ['you', 'Mostly better. My nose is still congested, but I don’t have a fever.'],
+      ['unflare', 'Thanks. I’ll keep this infection in your timeline as relevant context.']
+    ]
   }
 };
 
@@ -99,6 +192,7 @@ function renderTranscript(conversation) {
   document.querySelector('#transcriptTitle').textContent = conversation.title;
   document.querySelector('#transcriptMeta').textContent = conversation.meta;
   document.querySelector('#transcriptSummary').textContent = conversation.summary;
+  document.querySelector('.summary-box > div').innerHTML = conversation.tags.map(([label, value, className = '']) => `<span>${label} <b class="${className}">${value}</b></span>`).join('');
   document.querySelector('#transcriptMessages').innerHTML = conversation.messages.map(([speaker, text]) => `
     <div class="message ${speaker === 'you' ? 'user' : 'ai'}">
       <small>${speaker === 'you' ? 'YOU' : 'UNFLARE'}</small>

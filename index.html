@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Unflare health copilot prototype" />
-  <title>Unflare — Your health, understood</title>
+  <meta name="description" content="Unflare — an early-warning copilot for ANCA-associated vasculitis" />
+  <title>Unflare — ANCA vasculitis, understood over time</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=Manrope:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&amp;family=Manrope:wght@500;600;700&amp;display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -16,10 +16,11 @@
       <div class="brand" aria-label="Unflare"><span class="brand-mark">u</span><span>unflare</span></div>
       <nav>
         <a class="nav-item active" href="#dashboard" data-tab="dashboard"><span>⌂</span> Dashboard</a>
-        <a class="nav-item" href="#history" data-tab="history"><span>◷</span> Chat & calls</a>
+        <a class="nav-item" href="#history" data-tab="history"><span>◷</span> Check-ins</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="device-card"><span class="device-icon">⌚</span><div><strong>Apple Watch</strong><small><i></i> Synced 4m ago</small></div></div>
+        <div class="condition-card"><span>CARE PLAN</span><strong>GPA · Remission monitoring</strong><small>Rheumatology team connected</small></div>
         <div class="profile"><div class="avatar">AM</div><div><strong>Alex Morgan</strong><small>alex@example.com</small></div></div>
       </div>
     </aside>
@@ -27,70 +28,76 @@
     <main>
       <div id="dashboard" class="tab-panel active">
       <header>
-        <div><p class="eyebrow">SATURDAY, 18 JULY</p><h1>Good morning, Alex.</h1><p>Here’s what your body has been telling us.</p></div>
-        <div class="header-actions"><button id="checkIn" class="primary-button">Check in</button></div>
+        <div><p class="eyebrow">SATURDAY, 18 JULY · GPA MONITORING</p><h1>Good morning, Alex.</h1><p>Here’s what has changed from your usual pattern.</p></div>
+        <div class="header-actions"><span class="demo-pill">SIMULATED DATA</span><button id="checkIn" class="primary-button">Start symptom check-in</button></div>
       </header>
 
       <section id="overview" class="hero-grid">
         <article class="score-card">
-          <div class="card-heading"><div><p class="eyebrow">YOUR HEALTH PULSE</p><h2>Steady, with a few signals.</h2></div><span class="status-pill">● Monitoring</span></div>
-          <div class="score-content">
-            <div class="score-ring" style="--score:78"><div><strong>78</strong><span>/ 100</span></div></div>
-            <div class="score-copy"><p>Your recovery and activity remain within your normal range. Sleep and resting heart rate have shifted slightly over the past week.</p><button id="whyButton" class="text-button">Why this score <span>→</span></button></div>
+          <div class="card-heading"><div><p class="eyebrow">CURRENT ATTENTION LEVEL</p><h2>Care-team review recommended.</h2></div><span class="status-pill attention">● Needs attention</span></div>
+          <div class="attention-content">
+            <div class="attention-mark" aria-hidden="true"><span>↗</span></div>
+            <div class="score-copy"><p>A cluster of small changes has continued for 10 days following your prescribed prednisone reduction. This pattern deserves review, but it does not confirm a flare.</p><button id="whyButton" class="text-button">See the supporting evidence <span>→</span></button></div>
           </div>
-          <div class="score-footer"><span>7-day change</span><strong class="down">↓ 3 points</strong><span class="divider"></span><span>Confidence</span><strong>High</strong><span class="divider"></span><span>Last analysed</span><strong>8:42 AM</strong></div>
+          <div class="score-footer"><span>Pattern duration</span><strong>10 days</strong><span class="divider"></span><span>Triage confidence</span><strong>High</strong><span class="divider"></span><span>Last analysed</span><strong>8:42 AM</strong></div>
         </article>
 
         <article class="signal-card">
-          <div class="signal-top"><span class="signal-icon">↗</span><span class="new-pill">NEW</span></div>
-          <p class="eyebrow">WORTH NOTICING</p><h2>Your resting heart rate is trending up.</h2>
-          <p>It’s 9% above your personal baseline for the fourth day in a row. This can happen with stress, illness, or reduced recovery.</p>
-          <div class="mini-stats"><div><span>Baseline</span><strong>62 <small>bpm</small></strong></div><div><span>Today</span><strong class="warm">68 <small>bpm</small></strong></div><div><span>Duration</span><strong>4 <small>days</small></strong></div></div>
-          <button id="answerButton" class="dark-button">Answer 2 quick questions <span>→</span></button>
+          <div class="signal-top"><span class="signal-icon">Rx</span><span class="new-pill">CONTEXT</span></div>
+          <p class="eyebrow">MEDICATION TIMELINE</p><h2>Symptoms changed after your dose reduction.</h2>
+          <p>Your care team reduced prednisone from 10 mg to 7.5 mg on 9 July. Fatigue, joint aches, and sinus pressure have increased since then.</p>
+          <div class="mini-stats"><div><span>Previous</span><strong>10 <small>mg</small></strong></div><div><span>Current</span><strong class="warm">7.5 <small>mg</small></strong></div><div><span>Adherence</span><strong>96<small>%</small></strong></div></div>
+          <button id="answerButton" class="dark-button">Complete targeted check-in <span>→</span></button>
         </article>
       </section>
 
       <section id="insights" class="section-block">
-        <div class="section-title"><div><h2>Your week at a glance</h2><p>Compared with your personal baseline</p></div></div>
+        <div class="section-title"><div><h2>Signals at a glance</h2><p>Compared with your personal baseline — none of these signals diagnoses a flare</p></div></div>
         <div class="metric-grid">
-          <article class="metric-card"><div class="metric-title"><span class="metric-icon mint">♙</span><span>Activity</span><em class="good">On track</em></div><strong>7,842 <small>steps/day</small></strong><div class="bars" aria-label="Activity bar chart"><i style="height:55%"></i><i style="height:72%"></i><i style="height:64%"></i><i style="height:86%"></i><i style="height:78%"></i><i class="today" style="height:69%"></i><i class="future"></i></div><div class="chart-labels"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div><p><b>↑ 6%</b> from your usual week</p></article>
-          <article class="metric-card"><div class="metric-title"><span class="metric-icon blue">☾</span><span>Sleep</span><em class="watch">Watch</em></div><strong>6h 42m <small>average</small></strong><svg class="line-chart" viewBox="0 0 300 96" role="img" aria-label="Sleep trend"><path class="area" d="M0 30 L50 25 L100 42 L150 36 L200 58 L250 63 L300 54 L300 96 L0 96Z"/><path class="line" d="M0 30 L50 25 L100 42 L150 36 L200 58 L250 63 L300 54"/><line x1="0" y1="48" x2="300" y2="48"/></svg><p><b class="down">↓ 38 min</b> below your baseline</p></article>
-          <article class="metric-card"><div class="metric-title"><span class="metric-icon coral">♥</span><span>Recovery</span><em class="good">Balanced</em></div><strong>71 <small>score</small></strong><div class="recovery-row"><div class="small-ring">71</div><div><span>HRV</span><strong>42 ms</strong><span>Resting HR</span><strong>68 bpm</strong></div></div><p><b>Within range</b> for your baseline</p></article>
+          <article class="metric-card"><div class="metric-title"><span class="metric-icon mint">♙</span><span>Daily activity</span><em class="alert-tag">Shifted</em></div><strong>5,320 <small>steps/day</small></strong><div class="bars falling" aria-label="Activity declining over seven days"><i style="height:88%"></i><i style="height:80%"></i><i style="height:73%"></i><i style="height:64%"></i><i style="height:56%"></i><i class="today" style="height:48%"></i><i class="future"></i></div><div class="chart-labels"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div><p><b class="down">↓ 32%</b> below your usual level</p></article>
+          <article class="metric-card"><div class="metric-title"><span class="metric-icon blue">✦</span><span>Reported symptoms</span><em class="alert-tag">Increasing</em></div><div class="symptom-list"><div><span>Fatigue</span><b>Moderate · ↑</b></div><div><span>Joint aches</span><b>Mild · New</b></div><div><span>Sinus pressure</span><b>Persistent</b></div></div><p><b class="down">3 changes</b> across recent check-ins</p></article>
+          <article class="metric-card"><div class="metric-title"><span class="metric-icon coral">♥</span><span>Resting heart rate</span><em class="watch">Watch</em></div><strong>71 <small>bpm today</small></strong><svg class="line-chart warm-chart" viewBox="0 0 300 96" role="img" aria-label="Resting heart rate rising over seven days"><path class="area" d="M0 72 L50 68 L100 61 L150 55 L200 41 L250 31 L300 25 L300 96 L0 96Z"/><path class="line" d="M0 72 L50 68 L100 61 L150 55 L200 41 L250 31 L300 25"/><line x1="0" y1="62" x2="300" y2="62"/></svg><p><b class="down">↑ 14%</b> above your baseline of 62 bpm</p></article>
         </div>
       </section>
 
+      <section class="clinical-strip" aria-label="Latest clinical data">
+        <div><p class="eyebrow">SIMULATED CLINICAL DATA · 16 JULY</p><h2>Recent results are available to your care team.</h2><p>Wearable data cannot confirm or rule out active vasculitis. Clinical review and clinician-ordered tests remain essential.</p></div>
+        <div class="clinical-values"><span>Creatinine <b>89 µmol/L</b><small>Stable</small></span><span>Urine blood <b>Negative</b><small>Dip test</small></span><span>CRP <b>8 mg/L</b><small>From 3 mg/L</small></span></div>
+      </section>
+
       <section id="timeline" class="timeline-section">
-        <div class="section-title"><div><h2>The bigger picture</h2><p>Your data and check-ins, understood together</p></div></div>
+        <div class="section-title"><div><h2>The bigger picture</h2><p>Symptoms, medication, clinical data, and wearables understood together</p></div></div>
         <article class="timeline-card">
           <div class="timeline-date"><strong>TODAY</strong><span>18 JUL</span></div>
           <div class="timeline-line"><span></span></div>
-          <div class="timeline-content"><span class="ai-pill">✦ AI INSIGHT</span><h3>A small pattern is beginning to form</h3><p>Your sleep has shortened while resting heart rate has risen. You also mentioned feeling “more drained than usual” on Thursday. Together, these suggest your body may need more recovery.</p><div class="evidence"><span>☾ Sleep <b>−38 min</b></span><span>♥ Resting HR <b>+9%</b></span><span>◉ Check-in <b>Lower energy</b></span></div></div>
-          <div class="recommendation"><p class="eyebrow">SUGGESTED TODAY</p><h3>Keep it gentle.</h3><p>A lighter day and an earlier night may help. We’ll keep watching the pattern.</p><button id="planButton" class="outline-button">Add to today’s plan</button></div>
+          <div class="timeline-content"><span class="ai-pill">✦ PATTERN SUMMARY</span><h3>Several weak signals now form a sustained pattern</h3><p>Fatigue, joint aches, sinus pressure, falling activity, and a higher resting heart rate have developed following a prescribed dose reduction. A recent respiratory infection is also relevant context. These findings have several possible explanations and do not confirm a flare.</p><div class="evidence"><span>Rx Dose <b>10 → 7.5 mg</b></span><span>♙ Activity <b>−32%</b></span><span>♥ Resting HR <b>+14%</b></span><span>◉ Symptoms <b>3 changes</b></span></div></div>
+          <div class="recommendation"><p class="eyebrow">RECOMMENDED NEXT STEP</p><h3>Contact your care team.</h3><p>Share this 10-day summary and ask whether clinical review is needed. Keep taking medication as prescribed unless your care team advises otherwise.</p><button id="planButton" class="outline-button">Prepare care-team summary</button></div>
         </article>
       </section>
+      <aside class="safety-note"><span>i</span><p><strong>Unflare supports monitoring; it does not diagnose a flare.</strong> If you develop severe breathing difficulty, cough up blood, see blood in your urine, have marked weakness, or feel rapidly worse, seek urgent medical help.</p></aside>
       </div>
       <div id="history" class="tab-panel">
-        <header class="history-header"><div><p class="eyebrow">CONVERSATIONS</p><h1>Chat & call history</h1><p>Your check-ins and health calls, all in one place.</p></div><button id="startCall" class="primary-button">New check-in</button></header>
+        <header class="history-header"><div><p class="eyebrow">LONGITUDINAL RECORD</p><h1>Check-ins &amp; calls</h1><p>Your symptoms, medication context, and conversations in one place.</p></div><button id="startCall" class="primary-button">New symptom check-in</button></header>
         <section class="history-layout">
           <div class="conversation-list">
             <div class="history-filters"><button class="active" data-filter="all">All</button><button data-filter="call">Calls</button><button data-filter="chat">Chats</button></div>
-            <button class="conversation active" data-conversation="call" data-kind="call"><span class="conversation-icon call">☎</span><span><strong>Weekly health check-in</strong><small>Today · 9:14 AM · 4 min</small><em>Lower energy and mild headache discussed</em></span><b>›</b></button>
-            <button class="conversation" data-conversation="chat" data-kind="chat"><span class="conversation-icon chat">✦</span><span><strong>Daily check-in</strong><small>Thursday · 7:42 PM · Chat</small><em>“More drained than usual”</em></span><b>›</b></button>
-            <button class="conversation" data-conversation="call2" data-kind="call"><span class="conversation-icon call">☎</span><span><strong>Medication follow-up</strong><small>14 July · 10:30 AM · 3 min</small><em>No missed doses reported</em></span><b>›</b></button>
-            <button class="conversation" data-conversation="chat2" data-kind="chat"><span class="conversation-icon chat">✦</span><span><strong>Sleep check-in</strong><small>11 July · 8:05 AM · Chat</small><em>Sleep interrupted twice overnight</em></span><b>›</b></button>
+            <button class="conversation active" data-conversation="call" data-kind="call"><span class="conversation-icon call">☎</span><span><strong>Targeted symptom call</strong><small>Today · 9:14 AM · 4 min</small><em>Fatigue, joint aches, and sinus pressure</em></span><b>›</b></button>
+            <button class="conversation" data-conversation="chat" data-kind="chat"><span class="conversation-icon chat">✦</span><span><strong>Daily symptom check-in</strong><small>Thursday · 7:42 PM · Chat</small><em>“More drained than usual”</em></span><b>›</b></button>
+            <button class="conversation" data-conversation="call2" data-kind="call"><span class="conversation-icon call">☎</span><span><strong>Medication follow-up</strong><small>14 July · 10:30 AM · 3 min</small><em>Prednisone taper and adherence reviewed</em></span><b>›</b></button>
+            <button class="conversation" data-conversation="chat2" data-kind="chat"><span class="conversation-icon chat">✦</span><span><strong>Infection follow-up</strong><small>11 July · 8:05 AM · Chat</small><em>Cold improving; no fever reported</em></span><b>›</b></button>
           </div>
           <article class="transcript-card">
-            <div class="transcript-head"><div><span class="conversation-icon call">☎</span><div><h2 id="transcriptTitle">Weekly health check-in</h2><p id="transcriptMeta">Today · 9:14 AM · 4 minutes</p></div></div></div>
-            <div class="summary-box"><p class="eyebrow">CHECK-IN SUMMARY</p><p id="transcriptSummary">Alex reported lower energy since Thursday and a mild headache this morning. No fever, chest pain, or shortness of breath. Hydration may be lower than usual.</p><div><span>Energy <b>Lower</b></span><span>Urgency <b class="low-risk">Low</b></span><span>Follow-up <b>Tomorrow</b></span></div></div>
-            <div id="transcriptMessages" class="messages"><div class="message ai"><small>UNFLARE</small><p>Hi Alex, I noticed your resting heart rate has been a little higher. How have you been feeling?</p></div><div class="message user"><small>YOU</small><p>A bit more tired than usual, and I woke up with a mild headache.</p></div><div class="message ai"><small>UNFLARE</small><p>Have you had any fever, chest pain, or trouble breathing?</p></div><div class="message user"><small>YOU</small><p>No, none of those. I probably haven't had enough water today.</p></div></div>
+            <div class="transcript-head"><div><span class="conversation-icon call">☎</span><div><h2 id="transcriptTitle">Targeted symptom call</h2><p id="transcriptMeta">Today · 9:14 AM · 4 minutes</p></div></div></div>
+            <div class="summary-box"><p class="eyebrow">CHECK-IN SUMMARY</p><p id="transcriptSummary">Alex reported increasing fatigue, mild joint aches, and persistent sinus pressure. No fever, breathlessness, chest pain, visible blood in urine, rash, numbness, or weakness was reported.</p><div><span>Pattern <b>Changed</b></span><span>Attention <b class="review-risk">Review</b></span><span>Next step <b>Care team</b></span></div></div>
+            <div id="transcriptMessages" class="messages"><div class="message ai"><small>UNFLARE</small><p>Hi Alex. Your activity and resting heart rate have both shifted. Has your fatigue changed too?</p></div><div class="message user"><small>YOU</small><p>Yes, I’ve felt more tired each day, and my joints are a little achy.</p></div><div class="message ai"><small>UNFLARE</small><p>Have you noticed sinus symptoms, fever, breathing changes, urine changes, a rash, numbness, or unusual weakness?</p></div><div class="message user"><small>YOU</small><p>Some sinus pressure that hasn’t cleared, but none of the other symptoms.</p></div></div>
           </article>
         </section>
       </div>
     </main>
   </div>
 
-  <div id="modal" class="modal" aria-hidden="true"><div class="modal-backdrop"></div><div class="modal-panel"><button id="closeModal" class="close-button" aria-label="Close">×</button><span class="modal-symbol">✦</span><p class="eyebrow">DAILY CHECK-IN</p><h2 id="modalTitle">How are you feeling today?</h2><p id="modalCopy">This helps Unflare understand what your sensors can’t see.</p><div id="modalContent" class="mood-options"><button data-mood="Low">Low</button><button data-mood="Okay">Okay</button><button data-mood="Good">Good</button><button data-mood="Great">Great</button></div></div></div>
-  <div id="toast" class="toast">✓ Added to today’s plan</div>
+  <div id="modal" class="modal" aria-hidden="true"><div class="modal-backdrop"></div><div class="modal-panel"><button id="closeModal" class="close-button" aria-label="Close">×</button><span class="modal-symbol">✦</span><p class="eyebrow">AAV SYMPTOM CHECK-IN</p><h2 id="modalTitle">What has changed today?</h2><p id="modalCopy">Select every new or worsening symptom. This adds context; it does not diagnose a flare.</p><div id="modalContent" class="symptom-options"><button data-symptom="Fatigue">Fatigue</button><button data-symptom="Sinus or nasal symptoms">Sinus or nasal</button><button data-symptom="Joint or muscle pain">Joint or muscle pain</button><button data-symptom="Fever or infection">Fever or infection</button><button data-symptom="Breathing or chest symptoms">Breathing or chest</button><button data-symptom="Urine changes">Urine changes</button><button data-symptom="Rash or skin changes">Rash or skin</button><button data-symptom="Numbness or weakness">Numbness or weakness</button><button data-symptom="No new symptoms">No new symptoms</button><button class="modal-confirm save-symptoms" type="button">Save check-in</button></div><p class="modal-safety">For severe or rapidly worsening symptoms, seek urgent medical help instead of waiting for the app.</p></div></div>
+  <div id="toast" class="toast">✓ Care-team summary prepared</div>
   <script src="script.js"></script>
 </body>
 </html>

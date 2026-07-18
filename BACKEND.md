@@ -1,4 +1,4 @@
-# Eunoia backend recommendation
+# Unflare backend recommendation
 
 ## MVP architecture
 
