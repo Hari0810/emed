@@ -5,6 +5,7 @@ import twilio from "twilio";
 import { z } from "zod";
 import { attachSocket, finaliseCall, handlePatientPrompt, handleWhatsAppPrompt, interruptReply } from "./agent.js";
 import { config, hasTwilioCredentials, hasWhatsAppCredentials } from "./config.js";
+import { addLabResult, addMedicationEvent, addWearableReading, computeFlareEarlyWarning, detectDelayedFlareCorrelation, detectSlowBurn, detectTaperRisk, disambiguateSideEffects, getPatientTimeline, recommendAction, seedDemoMonitoringData } from "./monitoring.js";
 import { analyseCall } from "./runware.js";
 import { addTurn, createAppCheckIn, createCall, createVoiceCheckIn, getCall, getOrCreateWhatsAppSession, listCalls, setSummary, toPublicCall, updateCall, updateStatus } from "./store.js";
 import type { ConversationRelayMessage } from "./types.js";
@@ -19,6 +20,7 @@ let lastWhatsAppDemoAt = 0;
 
 await app.register(formbody);
 await app.register(websocket);
+seedDemoMonitoringData();
 
 const callRequestSchema = z.object({
   phoneNumber: z.string().trim().regex(/^\+[1-9]\d{7,14}$/, "Use an E.164 number, e.g. +447700900123").optional()
@@ -32,6 +34,11 @@ const voiceCheckInSchema = z.object({
     text: z.string().trim().min(1).max(2_000)
   })).min(2).max(20)
 });
+const sleepSchema = z.object({ totalMinutes: z.number().nonnegative(), deepMinutes: z.number().nonnegative(), remMinutes: z.number().nonnegative(), awakenings: z.number().nonnegative() });
+const wearableReadingSchema = z.object({ source: z.string().trim().min(1), recordedAt: z.string().datetime(), hrvMs: z.number().nonnegative().optional(), restingHeartRateBpm: z.number().nonnegative().optional(), steps: z.number().nonnegative().optional(), sleep: sleepSchema.optional() });
+const labResultSchema = z.object({ testName: z.string().trim().min(1), value: z.number(), unit: z.string().trim().min(1), referenceRange: z.string().trim().min(1).optional(), flagged: z.boolean().optional(), collectedAt: z.string().datetime(), source: z.string().trim().min(1) });
+const medicationEventSchema = z.object({ drugName: z.string().trim().min(1), dose: z.number().nonnegative().optional(), unit: z.string().trim().min(1).optional(), route: z.string().trim().min(1).optional(), eventType: z.enum(["start", "dose-change", "taper", "infusion", "missed-dose", "taken"]), occurredAt: z.string().datetime(), note: z.string().trim().max(2_000).optional() });
+const timelineQuerySchema = z.object({ from: z.string().datetime().optional(), to: z.string().datetime().optional() });
 
 function xmlEscape(value: string) {
   return value.replace(/[<>&"']/g, (character) => ({
@@ -199,6 +206,39 @@ app.get("/api/calls/:callId", async (request, reply) => {
   return { call: toPublicCall(session) };
 });
 
+app.post("/api/wearables", async (request, reply) => {
+  const parsed = wearableReadingSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid wearable reading." });
+  return reply.code(201).send({ reading: addWearableReading(parsed.data) });
+});
+
+app.post("/api/reports", async (request, reply) => {
+  const parsed = labResultSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid clinical result." });
+  return reply.code(201).send({ result: addLabResult(parsed.data) });
+});
+
+app.post("/api/medications", async (request, reply) => {
+  const parsed = medicationEventSchema.safeParse(request.body);
+  if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Invalid medication event." });
+  return reply.code(201).send({ event: addMedicationEvent(parsed.data) });
+});
+
+app.get("/api/anca/timeline", async (request, reply) => {
+  const parsed = timelineQuerySchema.safeParse(request.query);
+  if (!parsed.success) return reply.code(400).send({ error: "Invalid date range." });
+  return { timeline: getPatientTimeline(parsed.data) };
+});
+
+app.get("/api/anca/signals", async () => ({
+  slowBurn: detectSlowBurn() ?? null,
+  taperRisk: detectTaperRisk(),
+  sideEffects: disambiguateSideEffects(),
+  delayedCorrelation: detectDelayedFlareCorrelation(),
+  flareEarlyWarning: computeFlareEarlyWarning(),
+  recommendation: recommendAction()
+}));
+
 app.post("/twilio/whatsapp", async (request, reply) => {
   const body = (request.body as Record<string, unknown>) ?? {};
   const valid = isValidTwilioRequest(
@@ -318,4 +358,6 @@ app.get("/twilio/relay", { websocket: true }, (socket, request) => {
   });
 });
 
-await app.listen({ port: config.PORT, host: "0.0.0.0" });
+export { app };
+
+if (config.NODE_ENV !== "test") await app.listen({ port: config.PORT, host: "0.0.0.0" });
